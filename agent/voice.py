@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import io
 import os
+import wave
 from dataclasses import dataclass
 from typing import Optional
 
@@ -49,6 +51,17 @@ _DEFAULT_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-2")
 _SAMPLE_RATE = 16_000   # Hz — Deepgram prefers 16 kHz
 _CHANNELS = 1
 _DTYPE = "int16"        # 16-bit PCM
+
+
+def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int, channels: int) -> bytes:
+    """Wrap raw 16-bit PCM in a WAV container so Deepgram auto-detects the format."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(2)   # 16-bit = 2 bytes
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm_bytes)
+    return buf.getvalue()
 
 
 @dataclass
@@ -166,17 +179,20 @@ class VoiceAdapter(ModalityAdapter):
         return audio.tobytes()
 
     async def _transcribe(self, audio_bytes: bytes) -> CandidateInput:
-        """Send PCM audio to Deepgram STT; parse transcript + per-word timings."""
+        """Send audio to Deepgram STT; parse transcript + per-word timings.
+
+        Audio is wrapped in a WAV container before sending so Deepgram can
+        auto-detect format — the transcribe_file API has no sample_rate param.
+        """
         if not audio_bytes:
             return CandidateInput(text="")
 
+        wav_bytes = _pcm_to_wav(audio_bytes, _SAMPLE_RATE, _CHANNELS)
         response = await self._dg_client.listen.v1.media.transcribe_file(
-            request=audio_bytes,
+            request=wav_bytes,
             model=_DEFAULT_STT_MODEL,
             language=self._language,
             punctuate=True,
-            encoding="linear16",
-            sample_rate=_SAMPLE_RATE,
         )
 
         alt = response.results.channels[0].alternatives[0]
@@ -233,8 +249,9 @@ class VoiceAdapter(ModalityAdapter):
         """Synthesize text via Deepgram Aura TTS and play it through sounddevice."""
         import numpy as np
 
+        # generate() is an async generator — do NOT await it, iterate directly.
         audio_chunks: list[bytes] = []
-        async for chunk in await self._dg_client.speak.v1.audio.generate(
+        async for chunk in self._dg_client.speak.v1.audio.generate(
             text=text,
             model=_DEFAULT_TTS_MODEL,
             encoding="linear16",
