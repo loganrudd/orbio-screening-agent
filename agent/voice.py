@@ -38,12 +38,12 @@ class TextAdapter(ModalityAdapter):
     """Baseline: stdin/stdout. The engine's primary, always-available surface."""
 
     async def read_candidate(self) -> CandidateInput:
-        # TODO(execute): read a line from stdin.
-        raise NotImplementedError
+        # input() blocks the event loop; acceptable for single-user CLI.
+        text = input("You: ").strip()
+        return CandidateInput(text=text)
 
     async def emit_agent(self, text: str) -> None:
-        # TODO(execute): print.
-        raise NotImplementedError
+        print(f"\nAgent: {text}\n")
 
 
 class VoiceAdapter(ModalityAdapter):
@@ -59,13 +59,16 @@ class VoiceAdapter(ModalityAdapter):
 
     def __init__(self, *, language: str = "en") -> None:
         self._language = language
-        # TODO(execute): init Deepgram client (key from env DEEPGRAM_API_KEY).
+        self._text_fallback = TextAdapter()
+        # Phase 3: init Deepgram client (key from env DEEPGRAM_API_KEY).
+        # WebFetch deepgram-sdk v3.x docs before implementing to confirm exact API.
 
     async def read_candidate(self) -> CandidateInput:
-        # TODO(execute): record -> Deepgram STT -> CandidateInput with word timestamps
-        #   + confidence.
-        raise NotImplementedError
+        # Phase 3: record -> Deepgram STT -> CandidateInput with word timestamps + confidence.
+        # Degrades to text fallback until Phase 3.
+        return await self._text_fallback.read_candidate()
 
     async def emit_agent(self, text: str) -> None:
-        # TODO(execute): Deepgram Aura synth -> playback.
-        raise NotImplementedError
+        # Phase 3: Deepgram Aura TTS -> playback.
+        # Degrades to text fallback until Phase 3.
+        await self._text_fallback.emit_agent(text)
