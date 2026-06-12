@@ -1,6 +1,6 @@
 # Plan 003: Phase 3 — Voice Adapter (discrete STT → engine → TTS)
 
-**Status:** Draft
+**Status:** Complete
 **Phase:** 3 of 6
 **Created:** 2026-06-12
 **Canonical location on approval:** copy this file to `docs/plans/003-voice-adapter.md`
