@@ -12,6 +12,8 @@ from typing import Optional, Type, TypeVar
 
 from pydantic import BaseModel
 
+from .concurrency import ConcurrencyLimiter
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -38,28 +40,66 @@ class LLMClient(abc.ABC):
 
 
 class ClaudeClient(LLMClient):
-    """Anthropic Claude implementation. API-key auth via env (ANTHROPIC_API_KEY)."""
+    """Anthropic Claude implementation. API-key auth via env (ANTHROPIC_API_KEY).
+
+    Structured extraction uses tool use: the schema becomes the tool's input_schema,
+    tool_choice='any' forces the model to fill it, and we validate the returned input
+    via Pydantic. This is behind the LLMClient interface so tests can mock it.
+    """
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-5",  # confirm current model id in Explore
+        model: str = "claude-opus-4-8",
         *,
-        timeout_s: float = 30.0,
+        timeout_s: float = 60.0,
         max_retries: int = 3,
+        limiter: Optional[ConcurrencyLimiter] = None,
     ) -> None:
+        import anthropic
+
         self._model = model
-        self._timeout_s = timeout_s
-        self._max_retries = max_retries
-        # TODO(execute): init anthropic.AsyncAnthropic() (key from env).
+        self._limiter = limiter or ConcurrencyLimiter()
+        self._client = anthropic.AsyncAnthropic(
+            max_retries=max_retries,
+            timeout=timeout_s,
+        )
 
     async def extract_structured(
         self, *, system: str, messages: list[dict], schema: Type[T]
     ) -> T:
-        # TODO(execute): use tool-use / structured output with a tool whose input
-        #   schema is `schema.model_json_schema()`; validate the tool input via
-        #   schema.model_validate(...); retries w/ backoff via the concurrency limiter.
-        raise NotImplementedError
+        tool = {
+            "name": "record_extraction",
+            "description": (
+                "Record the fields extracted from the candidate's message. "
+                "Only populate fields the candidate explicitly mentioned."
+            ),
+            "input_schema": schema.model_json_schema(),
+        }
+
+        async def _call() -> T:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                system=system,
+                messages=messages,
+                tools=[tool],
+                tool_choice={"type": "any"},
+            )
+            for block in response.content:
+                if block.type == "tool_use":
+                    return schema.model_validate(block.input)
+            raise ValueError("No tool_use block in extraction response")
+
+        return await self._limiter.run(_call)
 
     async def respond(self, *, system: str, messages: list[dict]) -> str:
-        # TODO(execute): standard messages call; return text.
-        raise NotImplementedError
+        async def _call() -> str:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=512,
+                system=system,
+                messages=messages,
+            )
+            return response.content[0].text
+
+        return await self._limiter.run(_call)
