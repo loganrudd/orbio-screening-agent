@@ -1,0 +1,28 @@
+{
+  "id": "seed_en_clean",
+  "language": "en",
+  "turns": [
+    {"role": "agent", "content": "Hi! Thanks for your interest in joining us. I'll ask a few quick questions. What's your name?"},
+    {"role": "candidate", "content": "Hi, I'm Maria Gonzalez."},
+    {"role": "agent", "content": "Great, Maria. Which position are you applying for?"},
+    {"role": "candidate", "content": "I'm applying to be a line cook."},
+    {"role": "agent", "content": "How many years of kitchen experience do you have?"},
+    {"role": "candidate", "content": "About four years, mostly on the grill station."},
+    {"role": "agent", "content": "What shifts can you work?"},
+    {"role": "candidate", "content": "I'm open weekday evenings and weekends, both day and evening."},
+    {"role": "agent", "content": "When could you start, and are you authorized to work here?"},
+    {"role": "candidate", "content": "I can start on June 23rd, and yes I'm authorized to work in the US."}
+  ],
+  "ground_truth": {
+    "should_contain": {
+      "candidate_name": "Maria Gonzalez",
+      "position_applied_for": "line_cook",
+      "years_experience": 4,
+      "relevant_skills": ["grill station"],
+      "availability": ["weekday_evening", "weekend_day", "weekend_evening"],
+      "earliest_start_date": "2026-06-23",
+      "work_authorization": true
+    },
+    "should_not_contain": ["location_preference"]
+  }
+}

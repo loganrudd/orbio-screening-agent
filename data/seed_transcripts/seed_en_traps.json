@@ -1,0 +1,31 @@
+{
+  "id": "seed_en_traps",
+  "language": "en",
+  "comment": "Tests anti-over-inference (false positives) and conflict detection. The candidate never states years of experience or work authorization -> the agent MUST NOT invent them. The candidate gives a conflicting position.",
+  "turns": [
+    {"role": "agent", "content": "Hi there! What's your name?"},
+    {"role": "candidate", "content": "James. James Okonkwo."},
+    {"role": "agent", "content": "Which role are you interested in?"},
+    {"role": "candidate", "content": "I was thinking server, actually maybe host, I'm not sure yet."},
+    {"role": "agent", "content": "No problem. What's your availability?"},
+    {"role": "candidate", "content": "Just weekends for now."},
+    {"role": "agent", "content": "Got it. Anything else you'd like us to know?"},
+    {"role": "candidate", "content": "I'm a really hard worker and I learn fast."}
+  ],
+  "ground_truth": {
+    "should_contain": {
+      "candidate_name": "James Okonkwo",
+      "availability": ["weekend_day", "weekend_evening"]
+    },
+    "should_not_contain": [
+      "years_experience",
+      "work_authorization",
+      "earliest_start_date",
+      "relevant_skills"
+    ],
+    "conflicting": {
+      "position_applied_for": ["server", "host"]
+    },
+    "notes": "years_experience and work_authorization were never stated; recording any value for them is a FALSE POSITIVE. position is CONFLICTING (two values given), not a single confident value. 'hard worker / learns fast' are soft claims, not relevant_skills -> must not be recorded as skills."
+  }
+}

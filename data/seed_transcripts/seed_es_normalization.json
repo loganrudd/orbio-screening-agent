@@ -1,0 +1,28 @@
+{
+  "id": "seed_es_normalization",
+  "language": "es",
+  "comment": "Tests multilingual extraction: Spanish input must normalize to canonical English-keyed values (e.g. 'cinco anos' -> 5, 'fines de semana' -> weekend shifts, position enum). Values stored canonical regardless of input language.",
+  "turns": [
+    {"role": "agent", "content": "Hola, gracias por tu interes. Para empezar, como te llamas?"},
+    {"role": "candidate", "content": "Me llamo Sofia Ramirez."},
+    {"role": "agent", "content": "Para que puesto te postulas, Sofia?"},
+    {"role": "candidate", "content": "Quiero trabajar como mesera."},
+    {"role": "agent", "content": "Cuantos anos de experiencia tienes?"},
+    {"role": "candidate", "content": "Tengo cinco anos de experiencia en restaurantes."},
+    {"role": "agent", "content": "Que turnos puedes trabajar?"},
+    {"role": "candidate", "content": "Puedo trabajar entre semana por la tarde y los fines de semana."},
+    {"role": "agent", "content": "Cuando podrias empezar y tienes permiso para trabajar?"},
+    {"role": "candidate", "content": "Puedo empezar de inmediato y si, tengo permiso de trabajo."}
+  ],
+  "ground_truth": {
+    "should_contain": {
+      "candidate_name": "Sofia Ramirez",
+      "position_applied_for": "server",
+      "years_experience": 5,
+      "availability": ["weekday_evening", "weekend_day", "weekend_evening"],
+      "work_authorization": true
+    },
+    "should_not_contain": ["location_preference"],
+    "notes": "'mesera' -> server (canonical enum). 'cinco anos' -> 5 (int, not the Spanish word). 'de inmediato' -> earliest_start_date normalized to the run date or flagged as 'immediate' per execute decision. Values must be canonical regardless of Spanish input."
+  }
+}

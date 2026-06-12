@@ -1,0 +1,39 @@
+# AI-tooling artifacts (per project decision — keep durable rationale in docs/ and README)
+CLAUDE.md
+.claude/
+
+# Secrets / credentials
+.env
+.env.*
+*-service-account*.json
+*credentials*.json
+gcp-key*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Data (don't commit generated conversations; keep seed transcripts)
+data/conversations/*
+!data/conversations/.gitkeep
+
+# Demo media
+*.wav
+*.mp3
+*.mp4
+!demo/*  # if you intentionally keep a small demo asset
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
