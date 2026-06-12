@@ -262,6 +262,68 @@ class TestVoiceAdapterTTS:
         assert "Text only output" in captured.out
 
 
+# ──────────────────────────────── retry-with-backoff ──────────────────────────
+
+class TestVoiceAdapterRetry:
+    """Transient provider failures (incl. Deepgram's intermittent edge 401s on a
+    valid key) are retried with backoff; deterministic errors are not."""
+
+    def _adapter(self, monkeypatch) -> VoiceAdapter:
+        monkeypatch.setenv("DEEPGRAM_API_KEY", "fake-key")
+        with patch("agent.voice.AsyncDeepgramClient"), patch("agent.voice.sounddevice"):
+            adapter = VoiceAdapter()
+        adapter._dg_client = MagicMock()
+        return adapter
+
+    async def test_transient_401_retried_then_succeeds(self, monkeypatch):
+        """A 401 INVALID_AUTH on the first attempt is retried and then succeeds."""
+        monkeypatch.setattr("agent.voice.asyncio.sleep", AsyncMock())  # no real delay
+        adapter = self._adapter(monkeypatch)
+
+        calls = {"n": 0}
+
+        async def _factory():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("status_code: 401, body: {'err_code': 'INVALID_AUTH'}")
+            return "ok"
+
+        result = await adapter._with_retry(_factory, label="stt")
+        assert result == "ok"
+        assert calls["n"] == 2  # failed once, retried, succeeded
+
+    async def test_transient_failure_exhausts_attempts_then_raises(self, monkeypatch):
+        monkeypatch.setattr("agent.voice.asyncio.sleep", AsyncMock())
+        adapter = self._adapter(monkeypatch)
+
+        calls = {"n": 0}
+
+        async def _factory():
+            calls["n"] += 1
+            raise RuntimeError("INVALID_AUTH")
+
+        with pytest.raises(RuntimeError, match="INVALID_AUTH"):
+            await adapter._with_retry(_factory, label="tts")
+        assert calls["n"] == 3  # _MAX_PROVIDER_ATTEMPTS
+
+    async def test_deterministic_error_not_retried(self, monkeypatch):
+        """A 400-style error is not transient → raised immediately, no retry."""
+        sleep_mock = AsyncMock()
+        monkeypatch.setattr("agent.voice.asyncio.sleep", sleep_mock)
+        adapter = self._adapter(monkeypatch)
+
+        calls = {"n": 0}
+
+        async def _factory():
+            calls["n"] += 1
+            raise RuntimeError("status_code: 400, body: bad request")
+
+        with pytest.raises(RuntimeError, match="400"):
+            await adapter._with_retry(_factory, label="stt")
+        assert calls["n"] == 1  # no retry
+        sleep_mock.assert_not_called()
+
+
 # ──────────────────────────────── CandidateInput ──────────────────────────────
 
 class TestCandidateInput:

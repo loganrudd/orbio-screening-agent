@@ -52,6 +52,20 @@ _SAMPLE_RATE = 16_000   # Hz — Deepgram prefers 16 kHz
 _CHANNELS = 1
 _DTYPE = "int16"        # 16-bit PCM
 
+# Markers of TRANSIENT provider failures worth retrying. Deepgram's edge
+# intermittently returns 401 INVALID_AUTH on a valid key (observed from distant
+# regions, e.g. South America) — these are transient, not real credential
+# errors, so we retry them here. The SDK's own retry layer deliberately skips
+# 401. Network/transport and 5xx errors are also retried.
+_TRANSIENT_MARKERS = (
+    "401", "INVALID_AUTH", "Invalid credentials",
+    "500", "502", "503", "504", "INTERNAL", "Temporarily",
+    "timeout", "Timeout", "ConnectError", "ConnectionError",
+    "RemoteProtocol", "ReadError", "WriteError",
+)
+_MAX_PROVIDER_ATTEMPTS = 3
+_RETRY_BASE_DELAY_S = 0.5
+
 
 def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int, channels: int) -> bytes:
     """Wrap raw 16-bit PCM in a WAV container so Deepgram auto-detects the format."""
@@ -120,7 +134,6 @@ class VoiceAdapter(ModalityAdapter):
         self._limiter = limiter or ConcurrencyLimiter()
         self._text_fallback = TextAdapter()
         self._degraded = False
-        self._tts_ok = True  # set False on first auth/perm failure to stop retrying
         self._dg_client = None
 
         api_key = os.getenv("DEEPGRAM_API_KEY")
@@ -150,7 +163,33 @@ class VoiceAdapter(ModalityAdapter):
     async def _record_and_transcribe(self) -> CandidateInput:
         """Capture mic audio (push-to-talk), transcribe via Deepgram, return CandidateInput."""
         audio_bytes = await asyncio.to_thread(self._record_audio)
-        return await self._limiter.run(lambda: self._transcribe(audio_bytes))
+        return await self._with_retry(lambda: self._transcribe(audio_bytes), label="stt")
+
+    async def _with_retry(self, factory, *, label: str):
+        """Run a provider call through the limiter, retrying transient failures
+        (incl. Deepgram's intermittent edge 401s) with exponential backoff."""
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_PROVIDER_ATTEMPTS):
+            try:
+                return await self._limiter.run(factory)
+            except Exception as exc:
+                last_exc = exc
+                message = str(exc)
+                is_transient = any(m in message for m in _TRANSIENT_MARKERS)
+                is_last = attempt == _MAX_PROVIDER_ATTEMPTS - 1
+                if not is_transient or is_last:
+                    raise
+                delay = _RETRY_BASE_DELAY_S * (2 ** attempt)
+                log.warning(
+                    f"voice.{label}_retry",
+                    attempt=attempt + 1,
+                    of=_MAX_PROVIDER_ATTEMPTS,
+                    delay_s=delay,
+                    error=message[:120],
+                )
+                await asyncio.sleep(delay)
+        assert last_exc is not None  # loop always sets it before raising
+        raise last_exc
 
     def _record_audio(self) -> bytes:
         """Blocking mic capture: press Enter to start, Enter to stop. Returns raw PCM bytes."""
@@ -237,20 +276,15 @@ class VoiceAdapter(ModalityAdapter):
     async def emit_agent(self, text: str) -> None:
         print(f"\nAgent: {text}\n", flush=True)
 
-        if self._degraded or not self._tts_ok:
+        if self._degraded:
             return
 
         try:
-            await self._limiter.run(lambda: self._speak(text))
+            await self._with_retry(lambda: self._speak(text), label="tts")
         except Exception as exc:
-            error_str = str(exc)
-            log.warning("voice.tts_failed", error=error_str)
-            # Disable TTS for the rest of the session on auth/permission failures
-            # so we don't log a warning on every single agent turn.
-            if "401" in error_str or "Invalid credentials" in error_str or "INVALID_AUTH" in error_str:
-                log.warning("voice.tts_disabled", reason="auth failure — TTS will not be retried this session")
-                self._tts_ok = False
-            # Text already printed — no further fallback needed.
+            # Retries (incl. transient 401s) exhausted — text is already printed,
+            # so the conversation continues uninterrupted in text for this turn.
+            log.warning("voice.tts_failed", error=str(exc))
 
     async def _speak(self, text: str) -> None:
         """Synthesize text via Deepgram Aura TTS and play it through sounddevice."""
