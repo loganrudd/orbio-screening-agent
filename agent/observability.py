@@ -44,15 +44,14 @@ def init_tracing() -> None:
     """Idempotent setup: set experiment and enable Anthropic autolog.
 
     Call once at process start (cli.py). No-op and never raises when disabled.
+    Defaults to a local SQLite store (mlflow.db) when no URI is provided — SQLite
+    is the MLflow 3.x recommended local backend and works with `mlflow ui` out of
+    the box, unlike the deprecated ./mlruns file store.
     """
     if not _tracing_enabled():
         return
     try:
-        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "mlruns")
-        # MLflow 3.x requires opt-in for the local file store; set when not using a
-        # remote/DB URI so `MLFLOW_TRACING=1` works out of the box locally.
-        if not tracking_uri.startswith(("http://", "https://", "sqlite://", "postgresql://", "mysql://")):
-            os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(_EXPERIMENT_NAME)
         mlflow.anthropic.autolog(log_traces=True)

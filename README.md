@@ -122,11 +122,11 @@ needed).
 ## Observability (MLflow Tracing)
 
 Tracing is **opt-in** and a complete no-op by default — CI and standard runs never
-touch `mlruns/` or require a server.
+touch `mlflow.db` or require a server.
 
 **Enable:**
 ```bash
-MLFLOW_TRACING=1 python cli.py        # local file-store at ./mlruns
+MLFLOW_TRACING=1 python cli.py        # traces land in ./mlflow.db (SQLite, gitignored)
 # or point at a remote server:
 MLFLOW_TRACKING_URI=http://localhost:5000 python cli.py
 ```
@@ -143,7 +143,7 @@ Each `handle_turn()` call produces **one MLflow trace** with:
 
 **Inspect:**
 ```bash
-mlflow ui          # opens http://127.0.0.1:5000 — browse traces by experiment
+MLFLOW_TRACKING_URI=sqlite:///mlflow.db mlflow ui   # opens http://127.0.0.1:5000
 ```
 
 Experiment name: `orbio-screening`. One run per conversation; one trace per turn.
