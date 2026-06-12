@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from .extraction import Extractor
 from .llm import LLMClient
 from .observability import trace_turn
-from .output import build_summary, render_reviewer_table
+from .output import build_summary, render_candidate_confirmation, render_reviewer_table
 from .schemas import ConversationState, ScreeningRecord
 from .storage import ConversationSnapshot, ConversationStore, Turn
 
@@ -35,6 +35,7 @@ _GREETING_ES = (
 class AgentReply:
     text: str
     done: bool
+    reviewer_output: str | None = None  # backend-only; not spoken to the candidate
 
 
 class ConversationEngine:
@@ -116,7 +117,7 @@ class ConversationEngine:
             snapshot.state = ConversationState.SUMMARY
 
         # Generate the reply based on the new state
-        reply_text, done = await self._generate_reply(snapshot, outstanding)
+        reply_text, done, reviewer_output = await self._generate_reply(snapshot, outstanding)
 
         # Append agent turn
         agent_turn = Turn(
@@ -127,11 +128,11 @@ class ConversationEngine:
         snapshot.transcript.append(agent_turn)
         self._store.save(snapshot)
 
-        return AgentReply(text=reply_text, done=done)
+        return AgentReply(text=reply_text, done=done, reviewer_output=reviewer_output)
 
     async def _generate_reply(
         self, snapshot: ConversationSnapshot, outstanding: list[str]
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, str | None]:
         if snapshot.state == ConversationState.COLLECTING:
             # Increment reprompt count for the field we're about to ask about
             if outstanding:
@@ -150,27 +151,28 @@ class ConversationEngine:
                     system=_build_conversation_system(snapshot, outstanding),
                     messages=messages,
                 )
-            return reply_text, False
+            return reply_text, False, None
 
         if snapshot.state == ConversationState.CONFIRMING:
-            table = render_reviewer_table(snapshot.record)
+            # Candidate sees values only — no confidence scores or internal flags.
+            field_list = render_candidate_confirmation(snapshot.record)
             reply_text = (
-                f"Here's what I have for your application:\n{table}\n"
+                f"Here's what I have for your application:\n\n{field_list}\n\n"
                 "Does everything look correct? Feel free to clarify or correct anything."
             )
-            return reply_text, False
+            return reply_text, False, None
 
         if snapshot.state == ConversationState.SUMMARY:
             table = render_reviewer_table(snapshot.record)
             summary = build_summary(snapshot.record)
             snapshot.summary = summary
-            reply_text = (
-                f"{table}\n{summary}\n\n"
-                "Thank you for your time! We'll review your information and be in touch soon."
-            )
-            return reply_text, True
+            # reviewer_output is backend-only — printed to the terminal but not
+            # spoken to the candidate (the adapter only receives reply_text).
+            reviewer_output = f"{table}\n{summary}"
+            reply_text = "Thank you for your time! We'll review your application and be in touch soon."
+            return reply_text, True, reviewer_output
 
-        return "Thank you! Your screening is complete.", True
+        return "Thank you! Your screening is complete.", True, None
 
     def _outstanding_fields(self, snapshot: ConversationSnapshot) -> list[str]:
         """Required fields still None AND below the re-prompt cap."""

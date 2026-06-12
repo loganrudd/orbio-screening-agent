@@ -49,10 +49,16 @@ async def run(voice: bool, language: str) -> None:
             ts=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             audio_start_s=candidate_input.audio_start_s,
             audio_end_s=candidate_input.audio_end_s,
+            stt_confidence=candidate_input.stt_confidence,
+            words=candidate_input.words,
         )
 
         reply = await engine.handle_turn(conversation_id, text, turn)
         await adapter.emit_agent(reply.text)
+
+        # Reviewer panel is backend-only — printed directly, never spoken via the adapter.
+        if reply.reviewer_output:
+            print(reply.reviewer_output)
 
         if reply.done:
             break

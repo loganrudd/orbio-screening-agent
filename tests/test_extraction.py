@@ -10,7 +10,7 @@ import datetime
 
 import pytest
 
-from agent.extraction import Extractor, _values_differ
+from agent.extraction import Extractor, _values_differ, _align_span
 from agent.schemas import (
     ExtractedField,
     FieldFlag,
@@ -21,7 +21,7 @@ from agent.schemas import (
     BoolProposal,
     TurnExtraction,
 )
-from agent.storage import Turn
+from agent.storage import Turn, WordTiming
 
 from helpers import MockLLM, make_field, make_provenance
 
@@ -354,3 +354,204 @@ class TestValuesDiffer:
 
     def test_int_different(self):
         assert _values_differ(4, 5) is True
+
+
+# ──────────────────────────────────────── _align_span ────────────────────────
+
+def _wt(word: str, start: float, end: float, conf: float = 1.0) -> WordTiming:
+    return WordTiming(word=word, start_s=start, end_s=end, confidence=conf)
+
+
+class TestAlignSpan:
+    def _words(self) -> list[WordTiming]:
+        return [
+            _wt("My",    0.0, 0.3, 0.95),
+            _wt("name",  0.3, 0.6, 0.97),
+            _wt("is",    0.6, 0.8, 0.99),
+            _wt("Maria", 0.8, 1.2, 0.92),
+            _wt("and",   1.2, 1.4, 0.98),
+            _wt("I",     1.4, 1.5, 0.96),
+            _wt("am",    1.5, 1.7, 0.94),
+            _wt("ready", 1.7, 2.1, 0.88),
+        ]
+
+    def test_exact_match_returns_span(self):
+        result = _align_span("My name is Maria", self._words())
+        assert result is not None
+        start, end, conf = result
+        assert start == pytest.approx(0.0)
+        assert end == pytest.approx(1.2)
+
+    def test_min_confidence_returned(self):
+        result = _align_span("My name is Maria", self._words())
+        assert result is not None
+        _, _, conf = result
+        # Min confidence over "My"(0.95), "name"(0.97), "is"(0.99), "Maria"(0.92) = 0.92
+        assert conf == pytest.approx(0.92)
+
+    def test_case_and_punctuation_insensitive(self):
+        result = _align_span("my name is maria!", self._words())
+        assert result is not None
+        start, end, _ = result
+        assert start == pytest.approx(0.0)
+        assert end == pytest.approx(1.2)
+
+    def test_partial_quote_subset(self):
+        result = _align_span("I am ready", self._words())
+        assert result is not None
+        start, end, _ = result
+        assert start == pytest.approx(1.4)
+        assert end == pytest.approx(2.1)
+
+    def test_no_match_returns_none(self):
+        result = _align_span("completely unrelated text xyz", self._words())
+        assert result is None
+
+    def test_empty_source_returns_none(self):
+        assert _align_span("", self._words()) is None
+
+    def test_empty_words_returns_none(self):
+        assert _align_span("some words", []) is None
+
+    def test_single_word_match(self):
+        result = _align_span("ready", self._words())
+        assert result is not None
+        start, end, conf = result
+        assert start == pytest.approx(1.7)
+        assert end == pytest.approx(2.1)
+        assert conf == pytest.approx(0.88)
+
+
+# ──────────────────── extract_turn with STT word timings ─────────────────────
+
+class TestExtractTurnWithVoice:
+    """Per-field word-aligned attribution: when Turn.words is present, each
+    extracted field's provenance reflects the exact sub-span of speech that
+    produced it, and stt_confidence from the min word-confidence reduces the
+    overall confidence score."""
+
+    def _voice_turn(self, content: str, words: list[WordTiming]) -> Turn:
+        return Turn(
+            role="candidate",
+            content=content,
+            ts=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            audio_start_s=0.0,
+            audio_end_s=5.0,
+            stt_confidence=0.90,  # utterance-level fallback
+            words=words,
+        )
+
+    async def test_per_field_span_set_from_alignment(self):
+        """Field provenance gets the aligned sub-span, not the whole utterance."""
+        words = [
+            _wt("My",    0.0, 0.3, 0.95),
+            _wt("name",  0.3, 0.6, 0.97),
+            _wt("is",    0.6, 0.8, 0.99),
+            _wt("Maria", 0.8, 1.2, 0.92),
+            _wt("and",   1.2, 1.4, 0.98),
+            _wt("I",     1.4, 1.5, 0.96),
+            _wt("can",   1.5, 1.7, 0.91),
+            _wt("start",  1.7, 2.0, 0.89),
+            _wt("immediately", 2.0, 2.5, 0.93),
+        ]
+        proposal = TurnExtraction(
+            candidate_name=StringProposal(
+                value="Maria",
+                source_text="My name is Maria",
+                explicitly_stated=True,
+            ),
+        )
+        llm = MockLLM(extraction=proposal)
+        turn = self._voice_turn("My name is Maria and I can start immediately", words)
+        ext = Extractor(llm=llm)
+        result = await ext.extract_turn(
+            record=ScreeningRecord(),
+            latest_turn=turn,
+            turn_index=0,
+            language="en",
+        )
+        prov = result.candidate_name.provenance[0]
+        # Must be the aligned sub-span (0.0–1.2), not the full utterance (0.0–5.0)
+        assert prov.audio_start_s == pytest.approx(0.0)
+        assert prov.audio_end_s == pytest.approx(1.2)
+
+    async def test_stt_confidence_reduces_score(self):
+        """Min word-confidence from alignment feeds into rule-derived score."""
+        words = [
+            _wt("I",      0.0, 0.2, 0.50),  # low confidence word
+            _wt("am",     0.2, 0.4, 0.55),
+            _wt("authorized", 0.4, 0.9, 0.52),
+        ]
+        proposal = TurnExtraction(
+            work_authorization=BoolProposal(
+                value=True,
+                source_text="I am authorized",
+                explicitly_stated=True,
+            ),
+        )
+        llm = MockLLM(extraction=proposal)
+        turn = self._voice_turn("I am authorized", words)
+        ext = Extractor(llm=llm)
+        result = await ext.extract_turn(
+            record=ScreeningRecord(),
+            latest_turn=turn,
+            turn_index=0,
+            language="en",
+        )
+        ef = result.work_authorization
+        assert ef is not None
+        # stt_confidence=0.50 → score = 0.9 * 0.50 = 0.45 → below CONFIRMED threshold
+        assert ef.confidence.stt_confidence == pytest.approx(0.50)
+        assert ef.confidence.score == pytest.approx(0.9 * 0.50)
+
+    async def test_alignment_failure_falls_back_to_utterance_span(self):
+        """When alignment fails, provenance uses the whole utterance span."""
+        words = [_wt("hello", 1.0, 1.5, 0.9)]
+        proposal = TurnExtraction(
+            candidate_name=StringProposal(
+                value="Unknown",
+                source_text="completely unrelated xyz phrase",  # won't align
+                explicitly_stated=True,
+            ),
+        )
+        llm = MockLLM(extraction=proposal)
+        turn = self._voice_turn("hello", words)
+        ext = Extractor(llm=llm)
+        result = await ext.extract_turn(
+            record=ScreeningRecord(),
+            latest_turn=turn,
+            turn_index=0,
+            language="en",
+        )
+        if result.candidate_name is not None:
+            prov = result.candidate_name.provenance[0]
+            # Fallback: utterance-level span (0.0–5.0)
+            assert prov.audio_start_s == pytest.approx(0.0)
+            assert prov.audio_end_s == pytest.approx(5.0)
+
+    async def test_text_mode_turn_unchanged(self):
+        """With no words on Turn, provenance has no audio span (text mode)."""
+        proposal = TurnExtraction(
+            candidate_name=StringProposal(
+                value="Carlos",
+                source_text="I'm Carlos",
+                explicitly_stated=True,
+            ),
+        )
+        llm = MockLLM(extraction=proposal)
+        turn = Turn(
+            role="candidate",
+            content="I'm Carlos",
+            ts=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+        ext = Extractor(llm=llm)
+        result = await ext.extract_turn(
+            record=ScreeningRecord(),
+            latest_turn=turn,
+            turn_index=0,
+            language="en",
+        )
+        prov = result.candidate_name.provenance[0]
+        assert prov.audio_start_s is None
+        assert prov.audio_end_s is None
+        assert result.candidate_name.confidence.stt_confidence is None

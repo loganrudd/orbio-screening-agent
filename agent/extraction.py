@@ -8,6 +8,7 @@ false positive — the thing the eval harness penalizes). See extraction.md.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from .llm import LLMClient
@@ -22,7 +23,7 @@ from .schemas import (
     validate_start_date,
     validate_years_experience,
 )
-from .storage import Turn
+from .storage import Turn, WordTiming
 
 _EXTRACTION_SYSTEM_TEMPLATE = """\
 You are a structured data extraction assistant for a restaurant job screening system.
@@ -107,11 +108,35 @@ class Extractor:
             if value is None:
                 continue  # Field-specific normalization failed — skip
 
-            provenance = self._build_provenance(latest_turn, turn_index, source_text)
+            # Per-field word-aligned attribution: align source_text to STT word timings.
+            # Falls back to utterance-level span when words absent or alignment fails.
+            audio_start: Optional[float] = None
+            audio_end: Optional[float] = None
+            stt_conf: Optional[float] = None
+
+            if latest_turn.words:
+                aligned = _align_span(source_text, latest_turn.words)
+                if aligned is not None:
+                    audio_start, audio_end, stt_conf = aligned
+                else:
+                    audio_start = latest_turn.audio_start_s
+                    audio_end = latest_turn.audio_end_s
+                    stt_conf = latest_turn.stt_confidence
+            elif latest_turn.audio_start_s is not None:
+                audio_start = latest_turn.audio_start_s
+                audio_end = latest_turn.audio_end_s
+                stt_conf = latest_turn.stt_confidence
+
+            provenance = Provenance(
+                turn_index=turn_index,
+                audio_start_s=audio_start,
+                audio_end_s=audio_end,
+                source_text=source_text,
+            )
             confidence = compute_confidence(
                 validated=validated,
                 explicitly_stated=field_proposal.explicitly_stated,
-                stt_confidence=None,  # Phase 3: pass STT word confidence here
+                stt_confidence=stt_conf,
             )
 
             # Build incoming field (placeholder flag, then finalize)
@@ -129,15 +154,6 @@ class Extractor:
             updates[field_name] = self._merge_field(existing, incoming)
 
         return record.model_copy(update=updates) if updates else record
-
-    @staticmethod
-    def _build_provenance(turn: Turn, turn_index: int, source_text: str) -> Provenance:
-        return Provenance(
-            turn_index=turn_index,
-            audio_start_s=turn.audio_start_s,
-            audio_end_s=turn.audio_end_s,
-            source_text=source_text,
-        )
 
     @staticmethod
     def _merge_field(
@@ -233,6 +249,53 @@ def _values_differ(a: Any, b: Any) -> bool:
     if isinstance(a, list) and isinstance(b, list):
         return sorted(str(x) for x in a) != sorted(str(x) for x in b)
     return True
+
+
+def _align_span(
+    source_text: str, words: list[WordTiming]
+) -> Optional[tuple[float, float, float]]:
+    """Align source_text quote to a contiguous window in STT word timings.
+
+    Returns (start_s, end_s, min_confidence) or None when alignment is too
+    uncertain. Normalizes both sides (lowercase, punctuation stripped) and
+    finds the highest-scoring contiguous window. Returns None when the best
+    window matches fewer than half the query tokens.
+    """
+
+    def _tok(s: str) -> list[str]:
+        return [t for t in re.sub(r"[^\w\s]", "", s.lower()).split() if t]
+
+    query = _tok(source_text)
+    if not query or not words:
+        return None
+
+    # Flatten per-word tokens with their word index (handles "I'd" → ["i", "d"])
+    flat: list[tuple[str, int]] = []
+    for wi, w in enumerate(words):
+        for tok in _tok(w.word):
+            flat.append((tok, wi))
+
+    q_len = len(query)
+    if len(flat) < q_len:
+        return None
+
+    best_score = 0
+    best_start_wi = -1
+    best_end_wi = -1
+
+    for i in range(len(flat) - q_len + 1):
+        score = sum(1 for j in range(q_len) if flat[i + j][0] == query[j])
+        if score > best_score:
+            best_score = score
+            best_start_wi = flat[i][1]
+            best_end_wi = flat[i + q_len - 1][1]
+
+    # Require at least half of query tokens to match (rounded up)
+    if best_score < (q_len + 1) // 2 or best_start_wi < 0 or best_end_wi < best_start_wi:
+        return None
+
+    span = words[best_start_wi : best_end_wi + 1]
+    return (span[0].start_s, span[-1].end_s, min(w.confidence for w in span))
 
 
 def _format_current_state(record: ScreeningRecord) -> str:

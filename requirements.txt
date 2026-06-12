@@ -6,7 +6,9 @@ structlog>=24.1
 anthropic>=0.40
 
 # Voice (STT + TTS) — decoupled from the LLM
-deepgram-sdk>=3.7
+deepgram-sdk>=7.3,<8
+sounddevice>=0.5
+numpy>=1.26
 # Optional TTS upgrade:
 # elevenlabs>=1.0
 

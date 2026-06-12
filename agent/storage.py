@@ -21,12 +21,29 @@ from .schemas import ConversationState, ScreeningRecord
 
 
 @dataclass
+class WordTiming:
+    """Per-word STT timing from speech recognition. Provider-neutral.
+
+    Populated by the voice adapter (voice.py) and consumed by extraction.py
+    for per-field source attribution. Kept transient — not persisted to disk
+    because per-field spans are already stored inside Provenance.
+    """
+
+    word: str
+    start_s: float
+    end_s: float
+    confidence: float  # 0..1, word-level STT confidence
+
+
+@dataclass
 class Turn:
     role: str  # "agent" | "candidate"
     content: str
     ts: str  # ISO8601
     audio_start_s: Optional[float] = None
     audio_end_s: Optional[float] = None
+    stt_confidence: Optional[float] = None  # utterance-level min word-confidence (voice only)
+    words: Optional[list["WordTiming"]] = None  # transient — not persisted; used for per-field alignment
 
 
 @dataclass
@@ -80,6 +97,8 @@ def _snapshot_to_dict(snapshot: ConversationSnapshot) -> dict:
                 "ts": t.ts,
                 "audio_start_s": t.audio_start_s,
                 "audio_end_s": t.audio_end_s,
+                "stt_confidence": t.stt_confidence,
+                # words is transient — not persisted; per-field spans live in Provenance
             }
             for t in snapshot.transcript
         ],
@@ -104,6 +123,8 @@ def _snapshot_from_dict(d: dict) -> ConversationSnapshot:
                 ts=t["ts"],
                 audio_start_s=t.get("audio_start_s"),
                 audio_end_s=t.get("audio_end_s"),
+                stt_confidence=t.get("stt_confidence"),
+                # words is transient — always None on load
             )
             for t in d.get("transcript", [])
         ],

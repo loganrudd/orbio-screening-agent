@@ -60,6 +60,88 @@ def assign_flag(field: ExtractedField, *, reprompt_capped: bool) -> FieldFlag:
     return FieldFlag.NEEDS_REVIEW
 
 
+def render_candidate_confirmation(record: ScreeningRecord) -> str:
+    """Candidate-facing confirmation in natural prose.
+
+    Each sentence ends with a period so TTS pauses naturally between fields.
+    Also reads clearly as plain text. No confidence scores or internal flags.
+    """
+
+    def _val(fname: str):
+        ef = getattr(record, fname)
+        return ef.value if ef else None
+
+    sentences: list[str] = []
+
+    name = _val("candidate_name")
+    position = _val("position_applied_for")
+    experience = _val("years_experience")
+    skills = _val("relevant_skills")
+    availability = _val("availability")
+    start_date = _val("earliest_start_date")
+    work_auth = _val("work_authorization")
+    location = _val("location_preference")
+
+    # Name + position together
+    if name and position:
+        pos_str = str(position).replace("_", " ")
+        sentences.append(f"I have you down as {name}, applying for the {pos_str} position.")
+    elif name:
+        sentences.append(f"I have you down as {name}.")
+    elif position:
+        sentences.append(f"You're applying for the {str(position).replace('_', ' ')} position.")
+
+    # Experience + skills together when both present
+    if experience is not None and skills:
+        yrs = f"{experience} year{'s' if experience != 1 else ''}"
+        skill_str = ", ".join(str(s).replace("_", " ") for s in skills) if isinstance(skills, list) else str(skills).replace("_", " ")
+        sentences.append(f"You have {yrs} of experience, with skills in {skill_str}.")
+    elif experience is not None:
+        yrs = f"{experience} year{'s' if experience != 1 else ''}"
+        sentences.append(f"You have {yrs} of experience.")
+    elif skills:
+        skill_str = ", ".join(str(s).replace("_", " ") for s in skills) if isinstance(skills, list) else str(skills).replace("_", " ")
+        sentences.append(f"Your skills include {skill_str}.")
+
+    # Availability
+    if availability:
+        avail_list = [str(a).replace("_", " ") for a in availability] if isinstance(availability, list) else [str(availability).replace("_", " ")]
+        if len(avail_list) == 1:
+            sentences.append(f"You're available {avail_list[0]}.")
+        elif len(avail_list) == 2:
+            sentences.append(f"You're available {avail_list[0]} and {avail_list[1]}.")
+        else:
+            avail_str = ", ".join(avail_list[:-1]) + f", and {avail_list[-1]}"
+            sentences.append(f"You're available {avail_str}.")
+
+    # Start date
+    if start_date == "immediate":
+        sentences.append("You can start right away.")
+    elif start_date:
+        sentences.append(f"Your earliest start date is {start_date}.")
+
+    # Work authorization
+    if work_auth is True:
+        sentences.append("You're authorized to work.")
+    elif work_auth is False:
+        sentences.append("You mentioned you're not currently authorized to work.")
+
+    # Optional location
+    if location:
+        sentences.append(f"Your preferred location is {location}.")
+
+    # Call out anything we didn't capture
+    missing = [
+        _FIELD_LABELS.get(f, f)
+        for f in ScreeningRecord.required_fields()
+        if getattr(record, f) is None
+    ]
+    if missing:
+        sentences.append(f"I wasn't able to capture: {', '.join(missing)}.")
+
+    return " ".join(sentences)
+
+
 def render_reviewer_table(record: ScreeningRecord) -> str:
     """Render a formatted terminal table with per-field confidence + flags.
 

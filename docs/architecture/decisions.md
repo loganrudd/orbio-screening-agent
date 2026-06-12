@@ -122,6 +122,69 @@ the precision denominator**, and never counted as false positives.
 reviewer-facing output (first-class concept #2) explicitly requires `CONFLICTING` flagging
 for detected contradictions. The harness must reward, not penalize, this behavior.
 
+## 9. Per-field word-aligned STT attribution (Phase 3)
+
+**Decision:** each extracted field's `Provenance` carries the exact timestamped
+sub-span of the candidate's speech that produced it — not the whole utterance span.
+STT word-level confidence feeds the `stt_confidence` multiplier in the confidence
+formula.
+
+**Options considered:**
+1. Utterance-level span only: almost free (already wired). Every field extracted
+   from a turn shares the same `(audio_start_s, audio_end_s)`. Simpler, but coarse —
+   a "name + position + experience" turn would point all three fields at a 10-second
+   span rather than the specific words.
+2. Per-field word-aligned span (chosen): `_align_span(source_text, words)` in
+   `extraction.py` normalizes both the field's `source_text` quote and the STT word
+   list (lowercase, punctuation stripped), finds the best-matching contiguous word
+   window (≥50% token match), and returns `(first.start, last.end, min_confidence)`.
+   Falls back to utterance-level when words are absent or alignment fails. Requires a
+   pure alignment helper + one extra field on `Turn`.
+
+**Why per-field:** first-class concept #1 (source attribution) says "the exact
+timestamped span of the candidate's actual speech." Utterance-level violates the
+spirit for multi-field turns. Per-field attribution is the literal differentiator and
+the clearest talking point for an HR agent reviewer who needs to audit a value.
+
+**Why min word-confidence:** conservative by design (anti-false-positive aligned). A
+field is only as trustworthy as its weakest word. Reviewers see a lower confidence
+score on low-quality STT segments — which is the correct behavior for an HR trust
+instrument.
+
+**WordTiming is provider-neutral:** the engine stores `WordTiming(word, start_s,
+end_s, confidence)` — never a Deepgram type. The mapping from `deepgram.word.start`
+→ `WordTiming.start_s` lives entirely in `voice.py`. Swapping STT providers requires
+touching only the adapter.
+
+**`words` is transient (not persisted):** per-field spans are already written into
+`Provenance` on every `ExtractedField`. Persisting the full word list would bloat
+transcripts with redundant data. Only `stt_confidence` (utterance-level, for audit)
+is written to the JSON transcript.
+
+## 10. Discrete push-to-talk mic input (Phase 3)
+
+**Decision:** push-to-talk (Enter-to-start, Enter-to-stop) using `sounddevice` for
+mic capture, then a single Deepgram prerecorded-transcription API call. Async,
+behind the `ConcurrencyLimiter`.
+
+**Options considered:**
+1. File-based input (pre-recorded WAVs): fully deterministic, great for CI and scripted
+   demos, but not live.
+2. Live mic push-to-talk (chosen): most compelling demo surface for a voice-interview
+   product. `sounddevice` captures to a NumPy buffer; the buffer is sent as raw PCM
+   to Deepgram in one batch call. CI tests mock `sounddevice.rec` — no hardware needed.
+3. VAD-based auto-segmentation: more natural but adds complexity and a VAD dependency.
+   Out-of-scope at this phase; the discrete pipeline is the right thing to ship first.
+
+**TTS model:** `aura-asteria-en` (Deepgram Aura) by default. Overridable via
+`DEEPGRAM_TTS_MODEL` env var. Spanish voice (`aura-2-sirio-es` / `aura-2-diana-es`)
+is available when Phase 4 multilingual support lands. ElevenLabs is a one-line swap
+behind `_speak()`.
+
+**Graceful degradation:** `VoiceAdapter` degrades to `TextAdapter` if
+`DEEPGRAM_API_KEY` is absent, or if `deepgram` or `sounddevice` failed to import.
+Any per-turn STT or TTS error falls back for that turn only, without crashing.
+
 ## Scope: what was intentionally left out, and why
 - Kubernetes manifests (Dockerfile is proportionate); web UI (CLI demonstrates the
   contract); multi-agent framework (state machine is clearer); database (JSON via the

@@ -98,8 +98,8 @@ class TestCLISmoke:
         assert snap.record.candidate_name is not None
         assert snap.record.candidate_name.value == "Maria Gonzalez"
 
-    async def test_summary_contains_reviewer_table_icons(self, tmp_path):
-        """The final reply in SUMMARY state includes the reviewer table with status icons."""
+    async def test_summary_reviewer_output_contains_table_icons(self, tmp_path):
+        """SUMMARY state: reviewer table (with icons) is in reviewer_output, not spoken text."""
         llm = MockLLM(
             extractions=[_all_fields_extraction(), TurnExtraction()],
             reply="Standard reply",
@@ -111,7 +111,12 @@ class TestCLISmoke:
         await engine.handle_turn(conv_id, "All fields", _turn("All fields"))
         summary_reply = await engine.handle_turn(conv_id, "Confirmed", _turn("Confirmed"))
 
-        assert "✓" in summary_reply.text or "⚠" in summary_reply.text or "✗" in summary_reply.text
+        # Reviewer panel is backend-only — in reviewer_output, not in the spoken text
+        assert summary_reply.reviewer_output is not None
+        assert "✓" in summary_reply.reviewer_output or "⚠" in summary_reply.reviewer_output
+        # Spoken text should NOT contain reviewer metadata
+        assert "✓" not in summary_reply.text
+        assert "Conf" not in summary_reply.text
 
     async def test_spanish_greeting(self, tmp_path):
         """Starting with lang=es uses the Spanish greeting."""
