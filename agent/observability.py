@@ -1,11 +1,12 @@
 """Optional MLflow tracing for the conversation turn loop.
 
 Wraps each turn to capture per-turn latency, token usage (via autolog), and the
-decision path. Tracing is a complete no-op unless the env var MLFLOW_TRACING=1 (or
-MLFLOW_TRACKING_URI) is set — CI and default runs never touch mlruns/.
+decision path. Tracing activates when init_tracing() is called (cli.py does this
+unconditionally). Tests never call init_tracing() so they are unaffected.
 
 Architecture:
-- init_tracing()   — call once at process start (cli.py). Sets experiment, calls autolog.
+- init_tracing()   — call once at process start (cli.py). Always-on unless
+                     MLFLOW_TRACING=0 opts out or mlflow is not importable.
 - trace_root()     — root-span context manager; wraps the whole handle_turn() call.
 - trace_turn()     — child-span context manager; wraps extraction / respond sub-steps.
 
@@ -31,34 +32,35 @@ except Exception:  # pragma: no cover
     _MLFLOW_AVAILABLE = False
 
 _EXPERIMENT_NAME = "orbio-screening"
-# Default local backend. SQLite (not the deprecated ./mlruns file store) so that
-# `mlflow ui` works out of the box. The Makefile pins the same URI for the UI target;
-# keep the two in sync if this changes.
-_DEFAULT_TRACKING_URI = "sqlite:///mlflow.db"
+_enabled: bool = False  # set to True by init_tracing(); never mutated elsewhere
 
 
 def _tracing_enabled() -> bool:
-    """True only when mlflow is importable AND an explicit env var opts in."""
-    if not _MLFLOW_AVAILABLE:
-        return False
-    return bool(os.environ.get("MLFLOW_TRACING") or os.environ.get("MLFLOW_TRACKING_URI"))
+    """True only after init_tracing() has successfully completed."""
+    return _enabled
 
 
 def init_tracing() -> None:
-    """Idempotent setup: set experiment and enable Anthropic autolog.
+    """Enable tracing for this process.
 
-    Call once at process start (cli.py). No-op and never raises when disabled.
-    Defaults to a local SQLite store (mlflow.db) when no URI is provided — SQLite
-    is the MLflow 3.x recommended local backend and works with `mlflow ui` out of
-    the box, unlike the deprecated ./mlruns file store.
+    Called once at CLI startup. Always-on unless:
+    - mlflow is not importable, or
+    - MLFLOW_TRACING=0 is set (explicit opt-out).
+
+    Defaults to a local SQLite store (mlflow.db) — the MLflow 3.x recommended
+    local backend. Override with MLFLOW_TRACKING_URI for a remote server.
     """
-    if not _tracing_enabled():
+    global _enabled
+    if not _MLFLOW_AVAILABLE:
         return
+    if os.environ.get("MLFLOW_TRACING") == "0":
+        return  # explicit opt-out
     try:
-        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", _DEFAULT_TRACKING_URI)
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(_EXPERIMENT_NAME)
         mlflow.anthropic.autolog(log_traces=True)
+        _enabled = True
         log.info("mlflow_tracing_enabled", tracking_uri=tracking_uri, experiment=_EXPERIMENT_NAME)
     except Exception as exc:  # pragma: no cover
         log.warning("mlflow_init_failed", error=str(exc))

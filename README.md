@@ -121,17 +121,14 @@ needed).
 
 ## Observability (MLflow Tracing)
 
-Tracing is **opt-in** and a complete no-op by default — CI and standard runs never
-touch `mlflow.db` or require a server.
+Tracing is **on by default** when running the CLI — traces land in `./mlflow.db`
+(SQLite, gitignored). No server needed: the Python client writes directly to the file.
+Use `MLFLOW_TRACING=0` to opt out, or `MLFLOW_TRACKING_URI` to point at a remote server.
 
-**Enable:**
 ```bash
-make screen                           # text, tracing on (= MLFLOW_TRACING=1 python cli.py)
-make screen ARGS="--voice"            # voice; ARGS forwards any cli.py flag
-make screen ARGS="--lang es --voice"  # ES voice  (shortcut: make screen-es)
-# traces land in ./mlflow.db (SQLite, gitignored). Raw form / remote server:
-MLFLOW_TRACING=1 python cli.py
-MLFLOW_TRACKING_URI=http://localhost:5000 python cli.py
+python cli.py                                        # traces to ./mlflow.db automatically
+MLFLOW_TRACING=0 python cli.py                       # opt out
+MLFLOW_TRACKING_URI=http://localhost:5000 python cli.py  # remote server
 ```
 
 **What each trace contains:**
@@ -144,38 +141,14 @@ Each `handle_turn()` call produces **one MLflow trace** with:
 - Nested Anthropic SDK auto-spans (via `mlflow.anthropic.autolog`) carrying `input_tokens`,
   `output_tokens`, and per-call latency — no changes to `llm.py` required
 
-**Inspect:**
+**View traces** (after running a conversation):
 ```bash
-make mlflow-ui                        # opens http://127.0.0.1:5000 (same DB as `make screen`)
-# raw form:
-MLFLOW_TRACKING_URI=sqlite:///mlflow.db mlflow ui
+MLFLOW_TRACKING_URI=sqlite:///mlflow.db mlflow ui   # opens http://127.0.0.1:5000
 ```
 
-In the UI, select the **orbio-screening** experiment and open the **Traces** tab
-(traces are separate from Runs in MLflow 3.x — Runs stays empty). One trace per turn.
+Navigate to the **"orbio-screening"** experiment → **"Traces"** tab.
 
-> Traces flush when the process exits cleanly — let the CLI finish the conversation
-> rather than `Ctrl+C`-ing mid-run, or the last turns won't be written.
-
-**Two backends — direct DB (default) vs. server-first:**
-
-By default the app writes traces *directly* to the SQLite file and `mlflow ui` reads
-that same file. They are independent processes sharing `mlflow.db`, so **start order
-doesn't matter** — run `make mlflow-ui` before, during, or after a conversation and just
-refresh the browser to see new traces. (SQLite is single-writer; fine for one
-interactive run, not for many concurrent traced processes.)
-
-If you prefer the production-style model where a server is always on *first* and the app
-POSTs traces to it over HTTP:
-
-```bash
-make mlflow-server     # terminal 1: start the server (must be up first)
-make screen-server     # terminal 2: MLFLOW_TRACKING_URI=http://127.0.0.1:5000 python cli.py
-```
-
-Here the server **must** be running before the app, since the app sends traces to it
-over HTTP rather than touching the file. Same `init_tracing()` code path — only the
-`MLFLOW_TRACKING_URI` differs.
+Experiment name: `orbio-screening`. One run per conversation; one trace per turn.
 
 ## Potential Improvements
 
