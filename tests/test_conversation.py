@@ -265,3 +265,73 @@ class TestHandleTurnFlow:
         assert snap.state == ConversationState.GREETING
         assert reply.done is False
         assert len(reply.text) > 0
+
+
+# ────────────────────────── multilingual / language detection ─────────────────
+
+
+@pytest.mark.asyncio
+class TestLanguageDetection:
+    async def test_explicit_en_preserved(self, tmp_path):
+        """Explicit --lang en with auto_detect=False must never switch language."""
+        llm = MockLLM(reply="Got it.")
+        store = JsonFileStore(str(tmp_path))
+        engine = _make_engine(llm, store)
+        conv_id, _ = await engine.start("en", auto_detect=False)
+
+        # First turn is Spanish — should NOT trigger switch
+        await engine.handle_turn(conv_id, "Me llamo Sofia", _turn("Me llamo Sofia"))
+
+        snap = store.load(conv_id)
+        assert snap.language == "en"
+
+    async def test_auto_detect_switches_to_es_on_first_turn(self, tmp_path):
+        """auto_detect=True must switch language when ES is detected on the first turn."""
+        llm = MockLLM(reply="Entendido.")
+        store = JsonFileStore(str(tmp_path))
+        engine = _make_engine(llm, store)
+        conv_id, _ = await engine.start("en", auto_detect=True)
+
+        # First substantive turn in Spanish
+        await engine.handle_turn(
+            conv_id,
+            "Me llamo Sofia y quiero trabajar como mesera",
+            _turn("Me llamo Sofia y quiero trabajar como mesera"),
+        )
+
+        snap = store.load(conv_id)
+        assert snap.language == "es"
+
+    async def test_auto_detect_keeps_en_for_english_turn(self, tmp_path):
+        """auto_detect=True must not switch to ES when the first turn is English."""
+        llm = MockLLM(reply="Got it.")
+        store = JsonFileStore(str(tmp_path))
+        engine = _make_engine(llm, store)
+        conv_id, _ = await engine.start("en", auto_detect=True)
+
+        await engine.handle_turn(
+            conv_id,
+            "My name is Jane and I want to apply for a server position",
+            _turn("My name is Jane and I want to apply for a server position"),
+        )
+
+        snap = store.load(conv_id)
+        assert snap.language == "en"
+
+    async def test_detection_only_runs_once(self, tmp_path):
+        """Language must not flip on subsequent turns after the first."""
+        llm = MockLLM(reply="Got it.")
+        store = JsonFileStore(str(tmp_path))
+        engine = _make_engine(llm, store)
+        conv_id, _ = await engine.start("en", auto_detect=True)
+
+        # First turn: ES → switches to "es"
+        await engine.handle_turn(conv_id, "Me llamo Sofia", _turn("Me llamo Sofia"))
+        snap_after_first = store.load(conv_id)
+        assert snap_after_first.language == "es"
+        assert snap_after_first.state == ConversationState.COLLECTING
+
+        # Second turn in English: language must remain "es"
+        await engine.handle_turn(conv_id, "I want to apply", _turn("I want to apply"))
+        snap_after_second = store.load(conv_id)
+        assert snap_after_second.language == "es"

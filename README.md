@@ -22,9 +22,10 @@ pip install -r requirements.txt
 
 Run:
 ```bash
-python cli.py            # text mode
-python cli.py --voice    # voice mode (Deepgram STT in / Aura TTS out)
-python cli.py --lang es  # start in Spanish
+python cli.py                  # text mode, auto-detect language from first turn
+python cli.py --voice          # voice mode (Deepgram STT in / Aura TTS out)
+python cli.py --lang es        # force Spanish (greeting in ES, no auto-detect)
+python cli.py --lang es --voice  # ES voice mode (Aura-2 Spanish TTS)
 ```
 
 Tests + eval:
@@ -65,6 +66,42 @@ See `docs/architecture/decisions.md` for the full tradeoff writeups. Summary:
   model self-report — defensible and auditable.
 - **Discrete STT→LLM→TTS** voice pipeline; a real-time native-audio API (e.g. Gemini Live) is the production path
   for real-time turn-taking, deliberately scoped out here.
+- **Multilingual (EN + ES)** via a central `i18n` module — detection, candidate-facing
+  strings, and TTS voice selection are all language-keyed. Adding a third language is
+  one new entry in the string table.
+
+## Multilingual Support
+
+**Languages:** English (default) and Spanish. Adding more is a config edit.
+
+**How detection works:**
+
+```bash
+python cli.py           # --lang auto (default): greets in EN, detects language
+                        # from the first candidate turn, switches for the rest
+python cli.py --lang es  # force ES from the greeting (use for voice demos)
+```
+
+Detection uses `py3langid` — an offline, deterministic library. No API call, no
+seed needed, network-free. Runs exactly once, on the first candidate turn, then
+the detected code is persisted in the conversation snapshot (stateless — any
+replica that picks up the conversation later reads the correct language from
+storage). An explicit `--lang` flag bypasses detection entirely.
+
+**Canonical normalization:** Spanish input always extracts to English-keyed canonical
+values (e.g. "mesera" → `server`, "cinco años" → `5`, "de inmediato" → `"immediate"`).
+This is verified by the eval harness against `seed_es_normalization.json`.
+
+**Candidate-facing strings** (greeting, confirmation readback, closing) come from
+per-language templates in `agent/i18n.py`. The **reviewer table and summary stay
+English** — the reviewer reads English regardless of the candidate's language.
+
+**TTS voice:** EN uses `aura-asteria-en`; ES uses `aura-2-carina-es` (bilingual
+EN+ES capable). A new language needs one new entry in `_TTS_VOICES` in `i18n.py`.
+
+**Known limitation:** In auto-detect mode the greeting is EN (it runs before any
+candidate text exists). Use `--lang es` for an ES voice demo so the greeting starts
+in Spanish.
 
 ## Scaling & Bottlenecks
 

@@ -58,6 +58,7 @@ class ConversationSnapshot:
     created_at: str
     language: str
     state: ConversationState
+    auto_detect: bool = False  # if True, detect language from the first candidate turn
     transcript: list[Turn] = field(default_factory=list)
     record: Optional[ScreeningRecord] = None
     sentiment_timeline: list[dict] = field(default_factory=list)
@@ -77,7 +78,7 @@ class ConversationStore(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def new_conversation(self, language: str) -> ConversationSnapshot:
+    def new_conversation(self, language: str, *, auto_detect: bool = False) -> ConversationSnapshot:
         ...
 
 
@@ -89,6 +90,7 @@ def _snapshot_to_dict(snapshot: ConversationSnapshot) -> dict:
         "conversation_id": snapshot.conversation_id,
         "created_at": snapshot.created_at,
         "language": snapshot.language,
+        "auto_detect": snapshot.auto_detect,
         "state": snapshot.state.value,
         "transcript": [
             {
@@ -115,6 +117,7 @@ def _snapshot_from_dict(d: dict) -> ConversationSnapshot:
         conversation_id=d["conversation_id"],
         created_at=d["created_at"],
         language=d["language"],
+        auto_detect=d.get("auto_detect", False),
         state=ConversationState(d["state"]),
         transcript=[
             Turn(
@@ -171,12 +174,13 @@ class JsonFileStore(ConversationStore):
             tmp_path = f.name
         os.replace(tmp_path, path)
 
-    def new_conversation(self, language: str) -> ConversationSnapshot:
+    def new_conversation(self, language: str, *, auto_detect: bool = False) -> ConversationSnapshot:
         conversation_id = str(uuid.uuid4())
         snapshot = ConversationSnapshot(
             conversation_id=conversation_id,
             created_at=datetime.now(timezone.utc).isoformat(),
             language=language,
+            auto_detect=auto_detect,
             state=ConversationState.GREETING,
         )
         self.save(snapshot)
