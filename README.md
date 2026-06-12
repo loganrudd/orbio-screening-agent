@@ -126,8 +126,9 @@ touch `mlflow.db` or require a server.
 
 **Enable:**
 ```bash
-MLFLOW_TRACING=1 python cli.py        # traces land in ./mlflow.db (SQLite, gitignored)
-# or point at a remote server:
+make screen                           # = MLFLOW_TRACING=1 python cli.py
+# traces land in ./mlflow.db (SQLite, gitignored). Raw form / remote server:
+MLFLOW_TRACING=1 python cli.py
 MLFLOW_TRACKING_URI=http://localhost:5000 python cli.py
 ```
 
@@ -143,10 +144,16 @@ Each `handle_turn()` call produces **one MLflow trace** with:
 
 **Inspect:**
 ```bash
-MLFLOW_TRACKING_URI=sqlite:///mlflow.db mlflow ui   # opens http://127.0.0.1:5000
+make mlflow-ui                        # opens http://127.0.0.1:5000 (same DB as `make screen`)
+# raw form:
+MLFLOW_TRACKING_URI=sqlite:///mlflow.db mlflow ui
 ```
 
-Experiment name: `orbio-screening`. One run per conversation; one trace per turn.
+In the UI, select the **orbio-screening** experiment and open the **Traces** tab
+(traces are separate from Runs in MLflow 3.x — Runs stays empty). One trace per turn.
+
+> Traces flush when the process exits cleanly — let the CLI finish the conversation
+> rather than `Ctrl+C`-ing mid-run, or the last turns won't be written.
 
 ## Potential Improvements
 

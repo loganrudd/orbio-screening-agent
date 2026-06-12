@@ -31,6 +31,10 @@ except Exception:  # pragma: no cover
     _MLFLOW_AVAILABLE = False
 
 _EXPERIMENT_NAME = "orbio-screening"
+# Default local backend. SQLite (not the deprecated ./mlruns file store) so that
+# `mlflow ui` works out of the box. The Makefile pins the same URI for the UI target;
+# keep the two in sync if this changes.
+_DEFAULT_TRACKING_URI = "sqlite:///mlflow.db"
 
 
 def _tracing_enabled() -> bool:
@@ -51,7 +55,7 @@ def init_tracing() -> None:
     if not _tracing_enabled():
         return
     try:
-        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", _DEFAULT_TRACKING_URI)
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(_EXPERIMENT_NAME)
         mlflow.anthropic.autolog(log_traces=True)
