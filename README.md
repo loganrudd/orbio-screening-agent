@@ -256,9 +256,3 @@ Experiment name: `orbio-screening`. One run per conversation; one trace per turn
 - Additional languages (architecture supports it via config; only EN/ES are exercised
   here).
 - Persistent store (Redis/Postgres) behind the existing `ConversationStore` interface.
-
-## Demo
-
-📹 **[Demo video](#)** — _(add link)_ — one voice conversation through the Deepgram
-adapter (audio in → transcript → reviewer panel → audio out), plus one EN and one ES
-text conversation.
