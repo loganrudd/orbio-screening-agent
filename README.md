@@ -126,7 +126,9 @@ touch `mlflow.db` or require a server.
 
 **Enable:**
 ```bash
-make screen                           # = MLFLOW_TRACING=1 python cli.py
+make screen                           # text, tracing on (= MLFLOW_TRACING=1 python cli.py)
+make screen ARGS="--voice"            # voice; ARGS forwards any cli.py flag
+make screen ARGS="--lang es --voice"  # ES voice  (shortcut: make screen-es)
 # traces land in ./mlflow.db (SQLite, gitignored). Raw form / remote server:
 MLFLOW_TRACING=1 python cli.py
 MLFLOW_TRACKING_URI=http://localhost:5000 python cli.py

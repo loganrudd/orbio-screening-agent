@@ -7,22 +7,23 @@
 
 MLFLOW_TRACKING_URI ?= sqlite:///mlflow.db
 MLFLOW_SERVER_URL   ?= http://127.0.0.1:5000
+ARGS                ?=
 
 .PHONY: screen screen-voice screen-es screen-server mlflow-ui mlflow-server test eval
 
 # --- run the agent ---------------------------------------------------------------
 
-screen:                ## Text screening with MLflow tracing on
-	MLFLOW_TRACING=1 python cli.py
+screen:                ## Traced screening; forward cli.py flags via ARGS, e.g. ARGS="--voice"
+	MLFLOW_TRACING=1 python cli.py $(ARGS)
 
-screen-voice:          ## Voice screening (Deepgram STT/TTS) with tracing on
-	MLFLOW_TRACING=1 python cli.py --voice
+screen-voice:          ## Shortcut for `make screen ARGS="--voice"`
+	$(MAKE) screen ARGS="--voice"
 
-screen-es:             ## Spanish voice screening (greeting starts in ES) with tracing on
-	MLFLOW_TRACING=1 python cli.py --lang es --voice
+screen-es:             ## Shortcut for `make screen ARGS="--lang es --voice"` (ES voice)
+	$(MAKE) screen ARGS="--lang es --voice"
 
 screen-server:         ## Traced run that POSTs to `make mlflow-server` (start that first)
-	MLFLOW_TRACKING_URI=$(MLFLOW_SERVER_URL) python cli.py
+	MLFLOW_TRACKING_URI=$(MLFLOW_SERVER_URL) python cli.py $(ARGS)
 
 # --- observability ---------------------------------------------------------------
 
