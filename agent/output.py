@@ -60,6 +60,25 @@ def assign_flag(field: ExtractedField, *, reprompt_capped: bool) -> FieldFlag:
     return FieldFlag.NEEDS_REVIEW
 
 
+def render_candidate_confirmation(record: ScreeningRecord) -> str:
+    """Candidate-facing field summary: values only, no confidence or flags.
+
+    Used in the CONFIRMING state to let the candidate verify their answers
+    without exposing internal reviewer metadata.
+    """
+    lines: list[str] = []
+    all_fields = ScreeningRecord.required_fields() + ["location_preference"]
+    for fname in all_fields:
+        ef: ExtractedField | None = getattr(record, fname)
+        label = _FIELD_LABELS.get(fname, fname)
+        optional = " (optional)" if fname == "location_preference" else ""
+        if ef is None:
+            lines.append(f"  • {label}{optional}: (not provided)")
+        else:
+            lines.append(f"  • {label}: {_format_value(ef.value)}")
+    return "\n".join(lines)
+
+
 def render_reviewer_table(record: ScreeningRecord) -> str:
     """Render a formatted terminal table with per-field confidence + flags.
 

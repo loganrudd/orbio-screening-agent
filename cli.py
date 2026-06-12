@@ -56,6 +56,10 @@ async def run(voice: bool, language: str) -> None:
         reply = await engine.handle_turn(conversation_id, text, turn)
         await adapter.emit_agent(reply.text)
 
+        # Reviewer panel is backend-only — printed directly, never spoken via the adapter.
+        if reply.reviewer_output:
+            print(reply.reviewer_output)
+
         if reply.done:
             break
 
