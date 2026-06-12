@@ -10,6 +10,7 @@ This is the CI-safe path: deterministic, no network, no credentials.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import datetime
 import json
 from collections import deque
@@ -93,7 +94,11 @@ def replay_extract_fn(recorded_dir: str) -> Callable[[dict], dict]:
                 )
             return record
 
-        final = asyncio.run(_run())
+        # Run in a fresh thread with its own event loop so this works both in
+        # sync contexts and when called from within an already-running loop
+        # (e.g. eval/record.py's asyncio.run(main(...))).
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            final = pool.submit(asyncio.run, _run()).result()
         return final.model_dump(mode="json")
 
     return extract_fn

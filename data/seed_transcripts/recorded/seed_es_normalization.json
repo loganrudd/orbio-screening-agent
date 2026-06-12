@@ -1,0 +1,80 @@
+[
+  {
+    "candidate_name": {
+      "explicitly_stated": true,
+      "source_text": "Me llamo Sofia Ramirez.",
+      "value": "Sofia Ramirez"
+    },
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": {
+      "explicitly_stated": true,
+      "source_text": "Quiero trabajar como mesera.",
+      "value": "server"
+    },
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": {
+      "explicitly_stated": true,
+      "source_text": "Tengo cinco anos de experiencia en restaurantes.",
+      "value": 5
+    },
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": {
+      "explicitly_stated": true,
+      "source_text": "Puedo trabajar entre semana por la tarde y los fines de semana.",
+      "value": [
+        "weekday_evening",
+        "weekend_day",
+        "weekend_evening"
+      ]
+    },
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": {
+      "explicitly_stated": true,
+      "source_text": "Puedo empezar de inmediato",
+      "value": "immediate"
+    },
+    "work_authorization": {
+      "explicitly_stated": true,
+      "source_text": "si, tengo permiso de trabajo",
+      "value": true
+    },
+    "location_preference": null
+  }
+]

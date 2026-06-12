@@ -1,0 +1,86 @@
+[
+  {
+    "candidate_name": {
+      "explicitly_stated": true,
+      "source_text": "Hi, I'm Maria Gonzalez.",
+      "value": "Maria Gonzalez"
+    },
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": {
+      "explicitly_stated": true,
+      "source_text": "I'm applying to be a line cook.",
+      "value": "line_cook"
+    },
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": {
+      "explicitly_stated": true,
+      "source_text": "About four years",
+      "value": 4
+    },
+    "relevant_skills": {
+      "explicitly_stated": true,
+      "source_text": "mostly on the grill station",
+      "value": [
+        "grill station"
+      ]
+    },
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": {
+      "explicitly_stated": true,
+      "source_text": "I'm open weekday evenings and weekends, both day and evening.",
+      "value": [
+        "weekday_evening",
+        "weekend_day",
+        "weekend_evening"
+      ]
+    },
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": {
+      "explicitly_stated": true,
+      "source_text": "I can start on June 23rd",
+      "value": "2025-06-23"
+    },
+    "work_authorization": {
+      "explicitly_stated": true,
+      "source_text": "yes I'm authorized to work in the US",
+      "value": true
+    },
+    "location_preference": null
+  }
+]
