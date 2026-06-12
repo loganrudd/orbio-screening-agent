@@ -120,6 +120,7 @@ class VoiceAdapter(ModalityAdapter):
         self._limiter = limiter or ConcurrencyLimiter()
         self._text_fallback = TextAdapter()
         self._degraded = False
+        self._tts_ok = True  # set False on first auth/perm failure to stop retrying
         self._dg_client = None
 
         api_key = os.getenv("DEEPGRAM_API_KEY")
@@ -236,13 +237,19 @@ class VoiceAdapter(ModalityAdapter):
     async def emit_agent(self, text: str) -> None:
         print(f"\nAgent: {text}\n", flush=True)
 
-        if self._degraded:
+        if self._degraded or not self._tts_ok:
             return
 
         try:
             await self._limiter.run(lambda: self._speak(text))
         except Exception as exc:
-            log.warning("voice.tts_failed", error=str(exc))
+            error_str = str(exc)
+            log.warning("voice.tts_failed", error=error_str)
+            # Disable TTS for the rest of the session on auth/permission failures
+            # so we don't log a warning on every single agent turn.
+            if "401" in error_str or "Invalid credentials" in error_str or "INVALID_AUTH" in error_str:
+                log.warning("voice.tts_disabled", reason="auth failure — TTS will not be retried this session")
+                self._tts_ok = False
             # Text already printed — no further fallback needed.
 
     async def _speak(self, text: str) -> None:
