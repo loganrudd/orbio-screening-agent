@@ -43,6 +43,15 @@ try:
 except ImportError:
     sounddevice = None  # type: ignore[assignment]
 
+# httpx is a transitive dependency of the Deepgram SDK. Its timeout/transport
+# exceptions leak through the SDK and — critically — have an EMPTY str(), so they
+# can only be classified by TYPE, not by message substring. Guarded so the module
+# still imports if httpx is somehow absent.
+try:
+    import httpx
+except ImportError:
+    httpx = None  # type: ignore[assignment]
+
 log = structlog.get_logger()
 
 # STT model — language-independent
@@ -59,19 +68,31 @@ _DTYPE = "int16"        # 16-bit PCM
 # regions, e.g. South America) — these are transient, not real credential
 # errors, so we retry them here. The SDK's own retry layer deliberately skips
 # 401. Network/transport and 5xx errors are also retried.
+# Message-substring markers for transient failures that DO carry a message —
+# chiefly Deepgram's JSON-body errors (intermittent edge 401s, 5xx). Network
+# timeout/transport errors have an empty message and are matched by TYPE below.
 _TRANSIENT_MARKERS = (
     "401", "INVALID_AUTH", "Invalid credentials",
     "500", "502", "503", "504", "INTERNAL", "Temporarily",
-    "timeout", "Timeout", "ConnectError", "ConnectionError",
-    "RemoteProtocol", "ReadError", "WriteError",
 )
+# Exception TYPES that are always transient regardless of message. httpx timeout
+# and transport exceptions have an empty str(), so substring matching can never
+# catch them — they must be classified by type. Builtin TimeoutError (== asyncio
+# .TimeoutError) is what asyncio.wait_for raises on our per-call timeout below.
+_TRANSIENT_EXC_TYPES: tuple[type[BaseException], ...] = (
+    TimeoutError, ConnectionError,
+) + ((httpx.TimeoutException, httpx.TransportError) if httpx is not None else ())
+
 # Retry tuning. Edge blips can last a few seconds, so attempts must span a
 # longer window than they cost — exponential backoff + jitter does that. All
-# three are env-tunable so a high-latency/distant network can dial them up
-# without a code change.
+# are env-tunable so a high-latency/distant network can dial them up without a
+# code change.
 _MAX_PROVIDER_ATTEMPTS = int(os.getenv("VOICE_MAX_RETRIES", "5"))
 _RETRY_BASE_DELAY_S = float(os.getenv("VOICE_RETRY_BASE_DELAY_S", "0.5"))
 _RETRY_MAX_DELAY_S = float(os.getenv("VOICE_RETRY_MAX_DELAY_S", "8.0"))
+# Per-call timeout (synthesis/transcription only — NOT mic capture or playback).
+# A hung connection trips this, raising TimeoutError, which is transient → retried.
+_CALL_TIMEOUT_S = float(os.getenv("VOICE_CALL_TIMEOUT_S", "30.0"))
 
 
 def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int, channels: int) -> bytes:
@@ -164,7 +185,12 @@ class VoiceAdapter(ModalityAdapter):
         try:
             return await self._record_and_transcribe()
         except Exception as exc:
-            log.warning("voice.stt_failed", error=str(exc), fallback="text mode for this turn")
+            log.warning(
+                "voice.stt_failed",
+                error_type=type(exc).__name__,
+                error=str(exc) or repr(exc),
+                fallback="text mode for this turn",
+            )
             return await self._text_fallback.read_candidate()
 
     async def _record_and_transcribe(self) -> CandidateInput:
@@ -174,15 +200,22 @@ class VoiceAdapter(ModalityAdapter):
 
     async def _with_retry(self, factory, *, label: str):
         """Run a provider call through the limiter, retrying transient failures
-        (incl. Deepgram's intermittent edge 401s) with exponential backoff."""
+        (network timeouts/transport errors and Deepgram's intermittent edge 401s)
+        with exponential backoff. Each attempt is bounded by _CALL_TIMEOUT_S so a
+        hung connection fails fast into a retry instead of blocking the turn."""
         last_exc: Exception | None = None
         for attempt in range(_MAX_PROVIDER_ATTEMPTS):
             try:
-                return await self._limiter.run(factory)
+                return await asyncio.wait_for(
+                    self._limiter.run(factory), timeout=_CALL_TIMEOUT_S
+                )
             except Exception as exc:
                 last_exc = exc
-                message = str(exc)
-                is_transient = any(m in message for m in _TRANSIENT_MARKERS)
+                # Transient if the TYPE is a known timeout/transport error (these
+                # have an empty message) OR the message matches a transient marker.
+                is_transient = isinstance(exc, _TRANSIENT_EXC_TYPES) or any(
+                    m in str(exc) for m in _TRANSIENT_MARKERS
+                )
                 is_last = attempt == _MAX_PROVIDER_ATTEMPTS - 1
                 if not is_transient or is_last:
                     raise
@@ -195,7 +228,8 @@ class VoiceAdapter(ModalityAdapter):
                     attempt=attempt + 1,
                     of=_MAX_PROVIDER_ATTEMPTS,
                     delay_s=round(delay, 2),
-                    error=message[:120],
+                    error_type=type(exc).__name__,  # never blank, unlike str(exc)
+                    error=str(exc)[:120] or repr(exc),
                 )
                 await asyncio.sleep(delay)
         assert last_exc is not None  # loop always sets it before raising
@@ -332,15 +366,26 @@ class VoiceAdapter(ModalityAdapter):
         if self._degraded:
             return
 
+        # Synthesis is the network step — bounded by the per-call timeout and
+        # retried on transient failures. Playback is local and happens once,
+        # OUTSIDE retry, so a long reply's audio is never interrupted or replayed.
         try:
-            await self._with_retry(lambda: self._speak(text), label="tts")
+            audio = await self._with_retry(lambda: self._synthesize(text), label="tts")
         except Exception as exc:
-            # Retries (incl. transient 401s) exhausted — text is already printed,
-            # so the conversation continues uninterrupted in text for this turn.
-            log.warning("voice.tts_failed", error=str(exc))
+            # Retries exhausted — text is already printed, so the conversation
+            # continues uninterrupted in text for this turn.
+            log.warning("voice.tts_failed", error_type=type(exc).__name__, error=str(exc) or repr(exc))
+            return
 
-    async def _speak(self, text: str) -> None:
-        """Synthesize text via Deepgram Aura TTS and play it through sounddevice."""
+        if audio is not None and audio.size:
+            await asyncio.to_thread(sounddevice.play, audio, samplerate=_SAMPLE_RATE, blocking=True)
+
+    async def _synthesize(self, text: str):
+        """Synthesize text via Deepgram Aura TTS; return the decoded audio array.
+
+        Network-only: returns the PCM samples for the caller to play. Playback is
+        kept out of here so the per-call timeout/retry never spans audio playback.
+        """
         import numpy as np
 
         # generate() is an async generator — do NOT await it, iterate directly.
@@ -354,8 +399,7 @@ class VoiceAdapter(ModalityAdapter):
             audio_chunks.append(chunk)
 
         if not audio_chunks:
-            return
+            return None
 
         raw = b"".join(audio_chunks)
-        audio = np.frombuffer(raw, dtype=np.int16)
-        await asyncio.to_thread(sounddevice.play, audio, samplerate=_SAMPLE_RATE, blocking=True)
+        return np.frombuffer(raw, dtype=np.int16)
