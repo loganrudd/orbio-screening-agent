@@ -1,0 +1,53 @@
+[
+  {
+    "candidate_name": {
+      "explicitly_stated": true,
+      "source_text": "James. James Okonkwo.",
+      "value": "James Okonkwo"
+    },
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": {
+      "explicitly_stated": true,
+      "source_text": "Just weekends for now.",
+      "value": [
+        "weekend_day",
+        "weekend_evening"
+      ]
+    },
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  },
+  {
+    "candidate_name": null,
+    "position_applied_for": null,
+    "years_experience": null,
+    "relevant_skills": null,
+    "availability": null,
+    "earliest_start_date": null,
+    "work_authorization": null,
+    "location_preference": null
+  }
+]

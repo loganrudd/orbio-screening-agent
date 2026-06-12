@@ -81,6 +81,47 @@ state.
   needed).
 - _TODO: insert architecture diagram (ASCII or image)._
 
+## 7. Eval harness determinism strategy (Phase 2)
+
+**Decision:** the CI eval harness replays **pre-recorded per-turn `TurnExtraction`
+proposals** through the real `Extractor` pipeline (merge/validate/conflict/flag logic),
+rather than scoring pre-baked complete records or hitting the live API every run.
+
+**Options considered:**
+1. Pre-extracted full records: simplest, but bypasses the pipeline — only tests the
+   scoring math, not the extraction/merge/conflict code.
+2. Recorded per-turn proposals replayed through real `Extractor` (chosen): deterministic
+   and credential-free in CI, yet exercises the actual merge/conflict/provenance/flag
+   logic. Fixtures captured once via `python -m eval.record` (flagged).
+3. Live API every run: non-deterministic, requires credentials in CI, fails offline.
+
+**Why this matters:** The harness proves the pipeline, not just the scoring formula.
+A change to `_merge_field` or the anti-over-inference guard will be caught by a fixture
+regression, not just a unit test.
+
+**Fixture capture results (as of 2026-06-12):**
+- Precision: 0.929 | FP rate: 0.000 | Recall: 1.000
+- 1 mis-extraction: `earliest_start_date` year ambiguity ("June 23rd" → 2025 vs. expected 2026).
+  This is a documented harness limitation for relative date expressions without an explicit year.
+  Future mitigation: seed transcripts should include 4-digit years for unambiguous dates.
+
+## 8. `conflicting` field scoring in the eval harness (Phase 2)
+
+**Decision:** conflicting fields (those where the candidate gave contradictory values) are
+scored as a separate sub-metric (`conflict_correct` / `conflict_missed`), **excluded from
+the precision denominator**, and never counted as false positives.
+
+**Options considered:**
+1. Count as mis-extraction: penalizes correct conflict-handling — wrong incentive.
+2. Count as false positive: wrong — the field WAS stated, just contradictorily.
+3. Separate sub-metric, excluded from precision denominator (chosen): rewards surfacing
+   contradictions honestly. A `CONFLICTING` flag with both values set is correct
+   handling; a single value with no flag is `conflict_missed`.
+
+**Why:** An agent that surfaces a candidate's self-contradiction is doing its job. The
+reviewer-facing output (first-class concept #2) explicitly requires `CONFLICTING` flagging
+for detected contradictions. The harness must reward, not penalize, this behavior.
+
 ## Scope: what was intentionally left out, and why
 - Kubernetes manifests (Dockerfile is proportionate); web UI (CLI demonstrates the
   contract); multi-agent framework (state machine is clearer); database (JSON via the
