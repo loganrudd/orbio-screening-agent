@@ -95,6 +95,11 @@ def main() -> None:
         asyncio.run(run(voice=args.voice, language=args.lang))
     except KeyboardInterrupt:
         print("\n[Screening interrupted]", file=sys.stderr)
+        # Conversation JSON is saved incrementally on every turn — no data loss.
+        # os._exit bypasses atexit handlers (including MLflow's async trace flush)
+        # so Ctrl+C exits immediately rather than waiting up to 30 seconds.
+        import os
+        os._exit(0)
 
 
 if __name__ == "__main__":
