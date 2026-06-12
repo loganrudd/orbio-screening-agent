@@ -8,6 +8,7 @@ false positive — the thing the eval harness penalizes). See extraction.md.
 
 from __future__ import annotations
 
+import datetime
 import re
 from typing import Any, Optional
 
@@ -28,6 +29,8 @@ from .storage import Turn, WordTiming
 _EXTRACTION_SYSTEM_TEMPLATE = """\
 You are a structured data extraction assistant for a restaurant job screening system.
 
+Today's date: {today}
+
 Extract candidate information from their CURRENT message only. RULES:
 1. Only populate fields explicitly mentioned in this turn's message.
 2. Set explicitly_stated=true if the candidate directly stated the value.
@@ -37,6 +40,7 @@ Extract candidate information from their CURRENT message only. RULES:
 6. Normalize position to: server, line_cook, host, shift_manager, or other
 7. Normalize availability to one or more of: weekday_day, weekday_evening, weekend_day, weekend_evening
 8. Normalize start date: ISO format YYYY-MM-DD, or "immediate" for ASAP/now answers
+   Use today's date above to resolve relative dates ("next Monday", "in two weeks", etc.)
 9. work_authorization: true if clearly authorized to work, false if clearly not
 
 Already collected (only re-populate if the candidate is correcting a value):
@@ -60,7 +64,8 @@ class Extractor:
         from .output import assign_flag, compute_confidence
 
         system = _EXTRACTION_SYSTEM_TEMPLATE.format(
-            current_state=_format_current_state(record)
+            today=datetime.date.today().isoformat(),
+            current_state=_format_current_state(record),
         )
         messages = [
             {
