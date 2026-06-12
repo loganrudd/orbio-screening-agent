@@ -49,6 +49,10 @@ def init_tracing() -> None:
         return
     try:
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "mlruns")
+        # MLflow 3.x requires opt-in for the local file store; set when not using a
+        # remote/DB URI so `MLFLOW_TRACING=1` works out of the box locally.
+        if not tracking_uri.startswith(("http://", "https://", "sqlite://", "postgresql://", "mysql://")):
+            os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(_EXPERIMENT_NAME)
         mlflow.anthropic.autolog(log_traces=True)
