@@ -48,7 +48,7 @@ log = structlog.get_logger()
 _DEFAULT_TTS_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-asteria-en")
 _DEFAULT_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-2")
 
-# Audio recording settings (push-to-talk mic capture)
+# Audio recording settings
 _SAMPLE_RATE = 16_000   # Hz — Deepgram prefers 16 kHz
 _CHANNELS = 1
 _DTYPE = "int16"        # 16-bit PCM
@@ -120,7 +120,7 @@ class TextAdapter(ModalityAdapter):
 class VoiceAdapter(ModalityAdapter):
     """Discrete voice pipeline on Deepgram (single API key, no cloud-project setup).
 
-      read_candidate:  push-to-talk mic capture → Deepgram STT →
+      read_candidate:  VAD mic capture (auto-start/stop on speech) → Deepgram STT →
                        text + per-word timings + utterance confidence
       emit_agent:      Deepgram Aura TTS → audio bytes → sounddevice playback
                        (also prints the agent text so the terminal stays readable)
@@ -201,27 +201,70 @@ class VoiceAdapter(ModalityAdapter):
         raise last_exc
 
     def _record_audio(self) -> bytes:
-        """Blocking mic capture: press Enter to start, Enter to stop. Returns raw PCM bytes."""
+        """Energy-based VAD mic capture. Returns raw PCM bytes.
+
+        Opens the mic immediately. Calibrates background noise for ~400ms,
+        then waits for speech onset (RMS > 3.5× noise floor). Records until
+        ~1.5s of post-speech silence, then stops. No keypresses required.
+        """
         import numpy as np
 
-        print("\n[Voice] Press Enter to start recording...", flush=True)
-        input()
-        print("[Voice] Recording — press Enter to stop.", flush=True)
+        _CHUNK_FRAMES = int(_SAMPLE_RATE * 0.05)   # 50ms per chunk
+        _CALIB_CHUNKS = 8                           # ~400ms calibration window
+        _PRE_BUFFER_N = 10                          # chunks prepended before onset (~0.5s)
+        _SILENCE_STOP_N = 30                        # post-speech silence chunks to stop (~1.5s)
+        _MIN_SPEECH_N = 6                           # minimum speech chunks to be valid (~0.3s)
+        _MAX_CHUNKS = 600                           # hard stop at 30s
 
+        print("\n[Listening...]", end="", flush=True)
+
+        # --- Calibrate noise floor ---
+        noise_rms: list[float] = []
+        with sounddevice.InputStream(
+            samplerate=_SAMPLE_RATE, channels=_CHANNELS, dtype=_DTYPE
+        ) as stream:
+            for _ in range(_CALIB_CHUNKS):
+                data, _ = stream.read(_CHUNK_FRAMES)
+                noise_rms.append(float(np.sqrt(np.mean(data.astype(np.float32) ** 2))))
+        threshold = max(float(np.mean(noise_rms)) * 3.5, 150.0)
+
+        # --- VAD recording loop ---
         frames: list[np.ndarray] = []
-
-        def _callback(indata: np.ndarray, _frames: int, _time: object, _status: object) -> None:
-            frames.append(indata.copy())
+        pre_buffer: list[np.ndarray] = []
+        speech_started = False
+        silence_chunks = 0
+        speech_chunks = 0
 
         with sounddevice.InputStream(
-            samplerate=_SAMPLE_RATE,
-            channels=_CHANNELS,
-            dtype=_DTYPE,
-            callback=_callback,
-        ):
-            input()  # block until second Enter
+            samplerate=_SAMPLE_RATE, channels=_CHANNELS, dtype=_DTYPE
+        ) as stream:
+            for _ in range(_MAX_CHUNKS):
+                data, _ = stream.read(_CHUNK_FRAMES)
+                rms = float(np.sqrt(np.mean(data.astype(np.float32) ** 2)))
 
-        print("[Voice] Processing...", flush=True)
+                if not speech_started:
+                    pre_buffer.append(data.copy())
+                    if len(pre_buffer) > _PRE_BUFFER_N:
+                        pre_buffer.pop(0)
+                    if rms > threshold:
+                        speech_started = True
+                        frames.extend(pre_buffer)
+                        frames.append(data.copy())
+                        speech_chunks = 1
+                        silence_chunks = 0
+                        print("\r[Recording ■]  ", end="", flush=True)
+                else:
+                    frames.append(data.copy())
+                    if rms > threshold:
+                        silence_chunks = 0
+                        speech_chunks += 1
+                    else:
+                        silence_chunks += 1
+                    if silence_chunks >= _SILENCE_STOP_N and speech_chunks >= _MIN_SPEECH_N:
+                        break
+
+        print("\r[Processing...]  ", flush=True)
+
         if not frames:
             return b""
         audio = np.concatenate(frames, axis=0)
