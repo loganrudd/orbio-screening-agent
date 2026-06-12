@@ -6,8 +6,9 @@
 # always agree on where traces live.
 
 MLFLOW_TRACKING_URI ?= sqlite:///mlflow.db
+MLFLOW_SERVER_URL   ?= http://127.0.0.1:5000
 
-.PHONY: screen screen-voice screen-es mlflow-ui test eval
+.PHONY: screen screen-voice screen-es screen-server mlflow-ui mlflow-server test eval
 
 # --- run the agent ---------------------------------------------------------------
 
@@ -20,10 +21,16 @@ screen-voice:          ## Voice screening (Deepgram STT/TTS) with tracing on
 screen-es:             ## Spanish voice screening (greeting starts in ES) with tracing on
 	MLFLOW_TRACING=1 python cli.py --lang es --voice
 
+screen-server:         ## Traced run that POSTs to `make mlflow-server` (start that first)
+	MLFLOW_TRACKING_URI=$(MLFLOW_SERVER_URL) python cli.py
+
 # --- observability ---------------------------------------------------------------
 
-mlflow-ui:             ## Browse traces at http://127.0.0.1:5000 (same DB as `make screen`)
+mlflow-ui:             ## Browse traces at http://127.0.0.1:5000 (reads the SQLite DB directly)
 	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) mlflow ui
+
+mlflow-server:         ## Server-first model: start this, THEN `make screen-server` (separate shell)
+	mlflow server --backend-store-uri $(MLFLOW_TRACKING_URI) --port 5000
 
 # --- tests / eval ----------------------------------------------------------------
 

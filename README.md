@@ -155,6 +155,26 @@ In the UI, select the **orbio-screening** experiment and open the **Traces** tab
 > Traces flush when the process exits cleanly — let the CLI finish the conversation
 > rather than `Ctrl+C`-ing mid-run, or the last turns won't be written.
 
+**Two backends — direct DB (default) vs. server-first:**
+
+By default the app writes traces *directly* to the SQLite file and `mlflow ui` reads
+that same file. They are independent processes sharing `mlflow.db`, so **start order
+doesn't matter** — run `make mlflow-ui` before, during, or after a conversation and just
+refresh the browser to see new traces. (SQLite is single-writer; fine for one
+interactive run, not for many concurrent traced processes.)
+
+If you prefer the production-style model where a server is always on *first* and the app
+POSTs traces to it over HTTP:
+
+```bash
+make mlflow-server     # terminal 1: start the server (must be up first)
+make screen-server     # terminal 2: MLFLOW_TRACKING_URI=http://127.0.0.1:5000 python cli.py
+```
+
+Here the server **must** be running before the app, since the app sends traces to it
+over HTTP rather than touching the file. Same `init_tracing()` code path — only the
+`MLFLOW_TRACKING_URI` differs.
+
 ## Potential Improvements
 
 - Web UI (FastAPI/SSE) for the reviewer panel.
