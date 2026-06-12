@@ -20,6 +20,7 @@ import abc
 import asyncio
 import io
 import os
+import random
 import wave
 from dataclasses import dataclass
 from typing import Optional
@@ -63,8 +64,13 @@ _TRANSIENT_MARKERS = (
     "timeout", "Timeout", "ConnectError", "ConnectionError",
     "RemoteProtocol", "ReadError", "WriteError",
 )
-_MAX_PROVIDER_ATTEMPTS = 3
-_RETRY_BASE_DELAY_S = 0.5
+# Retry tuning. Edge blips can last a few seconds, so attempts must span a
+# longer window than they cost — exponential backoff + jitter does that. All
+# three are env-tunable so a high-latency/distant network can dial them up
+# without a code change.
+_MAX_PROVIDER_ATTEMPTS = int(os.getenv("VOICE_MAX_RETRIES", "5"))
+_RETRY_BASE_DELAY_S = float(os.getenv("VOICE_RETRY_BASE_DELAY_S", "0.5"))
+_RETRY_MAX_DELAY_S = float(os.getenv("VOICE_RETRY_MAX_DELAY_S", "8.0"))
 
 
 def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int, channels: int) -> bytes:
@@ -179,12 +185,15 @@ class VoiceAdapter(ModalityAdapter):
                 is_last = attempt == _MAX_PROVIDER_ATTEMPTS - 1
                 if not is_transient or is_last:
                     raise
-                delay = _RETRY_BASE_DELAY_S * (2 ** attempt)
+                # Exponential backoff, capped, with jitter so retries don't all
+                # land in lockstep inside the same edge blip.
+                delay = min(_RETRY_BASE_DELAY_S * (2 ** attempt), _RETRY_MAX_DELAY_S)
+                delay += random.uniform(0, _RETRY_BASE_DELAY_S)
                 log.warning(
                     f"voice.{label}_retry",
                     attempt=attempt + 1,
                     of=_MAX_PROVIDER_ATTEMPTS,
-                    delay_s=delay,
+                    delay_s=round(delay, 2),
                     error=message[:120],
                 )
                 await asyncio.sleep(delay)

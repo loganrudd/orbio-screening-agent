@@ -302,9 +302,11 @@ class TestVoiceAdapterRetry:
             calls["n"] += 1
             raise RuntimeError("INVALID_AUTH")
 
+        from agent.voice import _MAX_PROVIDER_ATTEMPTS
+
         with pytest.raises(RuntimeError, match="INVALID_AUTH"):
             await adapter._with_retry(_factory, label="tts")
-        assert calls["n"] == 3  # _MAX_PROVIDER_ATTEMPTS
+        assert calls["n"] == _MAX_PROVIDER_ATTEMPTS
 
     async def test_deterministic_error_not_retried(self, monkeypatch):
         """A 400-style error is not transient → raised immediately, no retry."""
