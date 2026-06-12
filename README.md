@@ -119,6 +119,35 @@ Production path: stateless replicas behind a load balancer; durable execution
 voice; cost-aware multi-model routing (cheap model for extraction, expensive only when
 needed).
 
+## Observability (MLflow Tracing)
+
+Tracing is **opt-in** and a complete no-op by default — CI and standard runs never
+touch `mlruns/` or require a server.
+
+**Enable:**
+```bash
+MLFLOW_TRACING=1 python cli.py        # local file-store at ./mlruns
+# or point at a remote server:
+MLFLOW_TRACKING_URI=http://localhost:5000 python cli.py
+```
+
+**What each trace contains:**
+
+Each `handle_turn()` call produces **one MLflow trace** with:
+- Root span `handle_turn` — decision-path attributes: `conversation_id`, `turn_index`,
+  `state_before`, `language`
+- Child span `extraction` — `turn_index`, `conv`
+- Child span `respond` (when in COLLECTING state) — `state`, `conv`
+- Nested Anthropic SDK auto-spans (via `mlflow.anthropic.autolog`) carrying `input_tokens`,
+  `output_tokens`, and per-call latency — no changes to `llm.py` required
+
+**Inspect:**
+```bash
+mlflow ui          # opens http://127.0.0.1:5000 — browse traces by experiment
+```
+
+Experiment name: `orbio-screening`. One run per conversation; one trace per turn.
+
 ## Potential Improvements
 
 - Web UI (FastAPI/SSE) for the reviewer panel.

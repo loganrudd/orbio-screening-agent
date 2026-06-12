@@ -21,12 +21,14 @@ import sys
 from agent.conversation import ConversationEngine
 from agent.extraction import Extractor
 from agent.llm import ClaudeClient
+from agent.observability import init_tracing
 from agent.output import build_summary, render_reviewer_table
 from agent.storage import JsonFileStore, Turn
 from agent.voice import TextAdapter, VoiceAdapter
 
 
 async def run(voice: bool, language: str) -> None:
+    init_tracing()
     store = JsonFileStore()
     llm = ClaudeClient()
     extractor = Extractor(llm)
