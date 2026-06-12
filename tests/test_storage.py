@@ -37,6 +37,16 @@ class TestNewConversation:
         snap = store.new_conversation("es")
         assert snap.language == "es"
 
+    def test_auto_detect_default_false(self, tmp_path):
+        store = JsonFileStore(str(tmp_path))
+        snap = store.new_conversation("en")
+        assert snap.auto_detect is False
+
+    def test_auto_detect_true_preserved(self, tmp_path):
+        store = JsonFileStore(str(tmp_path))
+        snap = store.new_conversation("en", auto_detect=True)
+        assert snap.auto_detect is True
+
 
 # ─────────────────────────────── save / load ──────────────────────────────────
 
@@ -103,6 +113,13 @@ class TestSaveLoad:
 
         loaded = store.load(snap.conversation_id)
         assert loaded.reprompt_counts == {"years_experience": 2, "availability": 1}
+
+    def test_auto_detect_round_trip(self, tmp_path):
+        store = JsonFileStore(str(tmp_path))
+        snap = store.new_conversation("en", auto_detect=True)
+        store.save(snap)
+        loaded = store.load(snap.conversation_id)
+        assert loaded.auto_detect is True
 
     def test_summary_round_trip(self, tmp_path):
         store = JsonFileStore(str(tmp_path))

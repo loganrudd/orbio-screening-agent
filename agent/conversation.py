@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 from dataclasses import dataclass
 
+from . import i18n
 from .extraction import Extractor
 from .llm import LLMClient
 from .observability import trace_turn
@@ -18,17 +19,6 @@ from .schemas import ConversationState, ScreeningRecord
 from .storage import ConversationSnapshot, ConversationStore, Turn
 
 MAX_REPROMPTS_PER_FIELD = 2
-
-_GREETING_EN = (
-    "Hi! I'm here to help with your application to our restaurant team. "
-    "This will just take a few minutes — I'll ask you a few quick questions about your background. "
-    "Let's start: what's your name?"
-)
-_GREETING_ES = (
-    "¡Hola! Estoy aquí para ayudarte con tu solicitud para nuestro equipo. "
-    "Solo tomaré unos minutos — te haré algunas preguntas sobre tu experiencia. "
-    "Empecemos: ¿cuál es tu nombre?"
-)
 
 
 @dataclass
@@ -53,10 +43,10 @@ class ConversationEngine:
         self._extractor = extractor
         # NOTE: no in-process conversation state — reprompt_counts live in snapshot.
 
-    async def start(self, language: str) -> tuple[str, AgentReply]:
+    async def start(self, language: str, *, auto_detect: bool = False) -> tuple[str, AgentReply]:
         """Begin a conversation; returns (conversation_id, greeting reply)."""
-        snapshot = self._store.new_conversation(language)
-        greeting = _GREETING_ES if language == "es" else _GREETING_EN
+        snapshot = self._store.new_conversation(language, auto_detect=auto_detect)
+        greeting = i18n.greeting(language)
 
         agent_turn = Turn(
             role="agent",
@@ -91,8 +81,13 @@ class ConversationEngine:
         if snapshot.record is None:
             snapshot.record = ScreeningRecord()
 
-        # Transition GREETING → COLLECTING on the first candidate response
+        # Transition GREETING → COLLECTING on the first candidate response.
+        # Language detection runs exactly once here (before any extraction).
         if snapshot.state == ConversationState.GREETING:
+            if snapshot.auto_detect:
+                detected = i18n.detect_language(turn.content)
+                if detected:
+                    snapshot.language = detected
             snapshot.state = ConversationState.COLLECTING
 
         # Run extraction while collecting or confirming (corrections)
@@ -155,11 +150,9 @@ class ConversationEngine:
 
         if snapshot.state == ConversationState.CONFIRMING:
             # Candidate sees values only — no confidence scores or internal flags.
-            field_list = render_candidate_confirmation(snapshot.record)
-            reply_text = (
-                f"Here's what I have for your application:\n\n{field_list}\n\n"
-                "Does everything look correct? Feel free to clarify or correct anything."
-            )
+            s = i18n.get_strings(snapshot.language)
+            field_list = render_candidate_confirmation(snapshot.record, snapshot.language)
+            reply_text = f"{s.confirming_intro}{field_list}{s.confirming_outro}"
             return reply_text, False, None
 
         if snapshot.state == ConversationState.SUMMARY:
@@ -169,10 +162,10 @@ class ConversationEngine:
             # reviewer_output is backend-only — printed to the terminal but not
             # spoken to the candidate (the adapter only receives reply_text).
             reviewer_output = f"{table}\n{summary}"
-            reply_text = "Thank you for your time! We'll review your application and be in touch soon."
+            reply_text = i18n.closing(snapshot.language)
             return reply_text, True, reviewer_output
 
-        return "Thank you! Your screening is complete.", True, None
+        return i18n.fallback(snapshot.language), True, None
 
     def _outstanding_fields(self, snapshot: ConversationSnapshot) -> list[str]:
         """Required fields still None AND below the re-prompt cap."""

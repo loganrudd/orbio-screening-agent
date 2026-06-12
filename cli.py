@@ -4,9 +4,11 @@ Wires the modality adapter (text by default, voice with --voice) to the conversa
 engine. The engine is modality-agnostic; this file chooses the adapter.
 
 Usage:
-    python cli.py                 # text mode
-    python cli.py --voice         # voice mode (Deepgram STT/TTS — Phase 3)
-    python cli.py --lang es        # start in Spanish
+    python cli.py                  # text mode, auto-detect language
+    python cli.py --voice          # voice mode (Deepgram STT/TTS)
+    python cli.py --lang es        # force Spanish (no auto-detect)
+    python cli.py --lang en        # force English (no auto-detect)
+    python cli.py --lang auto      # explicit auto-detect (same as default)
 """
 
 from __future__ import annotations
@@ -29,10 +31,20 @@ async def run(voice: bool, language: str) -> None:
     llm = ClaudeClient()
     extractor = Extractor(llm)
     engine = ConversationEngine(store=store, llm=llm, extractor=extractor)
-    adapter = VoiceAdapter(language=language) if voice else TextAdapter()
+
+    # "auto" means start with EN greeting and detect on the first candidate turn.
+    # An explicit language code skips detection entirely.
+    if language == "auto":
+        initial_lang = "en"
+        auto_detect = True
+    else:
+        initial_lang = language
+        auto_detect = False
+
+    adapter = VoiceAdapter(language=initial_lang) if voice else TextAdapter()
 
     # Start conversation and emit greeting
-    conversation_id, greeting = await engine.start(language)
+    conversation_id, greeting = await engine.start(initial_lang, auto_detect=auto_detect)
     await adapter.emit_agent(greeting.text)
 
     # Turn loop
@@ -70,7 +82,11 @@ async def run(voice: bool, language: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Restaurant screening agent")
     parser.add_argument("--voice", action="store_true", help="use voice (Deepgram STT/TTS)")
-    parser.add_argument("--lang", default="en", help="starting language (en/es)")
+    parser.add_argument(
+        "--lang",
+        default="auto",
+        help="language: 'auto' detects from first turn (default), or 'en'/'es' to force",
+    )
     args = parser.parse_args()
 
     try:

@@ -5,7 +5,7 @@ All pure functions — no LLM, no filesystem.
 
 import pytest
 
-from agent.output import assign_flag, build_summary, compute_confidence, render_reviewer_table
+from agent.output import assign_flag, build_summary, compute_confidence, render_candidate_confirmation, render_reviewer_table
 from agent.schemas import FieldFlag, ScreeningRecord
 
 from helpers import make_field, make_record
@@ -169,3 +169,38 @@ class TestBuildSummary:
         # With all fields confirmed, "Missing:" should not appear (or list should be empty)
         # The summary line format is "Missing: <list>", only present when fields are missing
         assert "7/7" in summary or "Missing: " not in summary
+
+
+# ────────────────────────── render_candidate_confirmation (language) ──────────
+
+
+class TestRenderCandidateConfirmation:
+    def _full_record(self):
+        return make_record(
+            candidate_name=make_field("Jane Doe"),
+            position_applied_for=make_field("server"),
+            years_experience=make_field(2),
+            relevant_skills=make_field(["service"]),
+            availability=make_field(["weekday_day"]),
+            earliest_start_date=make_field("immediate"),
+            work_authorization=make_field(True),
+        )
+
+    def test_en_default_contains_english(self):
+        text = render_candidate_confirmation(self._full_record())
+        assert "Jane Doe" in text
+        assert "server" in text
+
+    def test_en_explicit_contains_english(self):
+        text = render_candidate_confirmation(self._full_record(), "en")
+        assert "right away" in text  # EN frame for "immediate"
+
+    def test_es_contains_spanish(self):
+        text = render_candidate_confirmation(self._full_record(), "es")
+        assert "Jane Doe" in text
+        assert "mesero" in text.lower()
+        assert "inmediato" in text.lower()
+
+    def test_es_years_in_spanish(self):
+        text = render_candidate_confirmation(self._full_record(), "es")
+        assert "años" in text

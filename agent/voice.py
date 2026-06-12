@@ -27,6 +27,7 @@ from typing import Optional
 
 import structlog
 
+from . import i18n
 from .concurrency import ConcurrencyLimiter
 from .storage import WordTiming
 
@@ -44,9 +45,9 @@ except ImportError:
 
 log = structlog.get_logger()
 
-# Deepgram Aura TTS voice — clear EN female voice. Swap via env for demos.
-_DEFAULT_TTS_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-asteria-en")
+# STT model — language-independent
 _DEFAULT_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-2")
+# TTS model is language-keyed via i18n.tts_voice(); env override still wins.
 
 # Audio recording settings
 _SAMPLE_RATE = 16_000   # Hz — Deepgram prefers 16 kHz
@@ -346,7 +347,7 @@ class VoiceAdapter(ModalityAdapter):
         audio_chunks: list[bytes] = []
         async for chunk in self._dg_client.speak.v1.audio.generate(
             text=text,
-            model=_DEFAULT_TTS_MODEL,
+            model=i18n.tts_voice(self._language),
             encoding="linear16",
             sample_rate=_SAMPLE_RATE,
         ):

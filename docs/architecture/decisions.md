@@ -176,14 +176,55 @@ behind the `ConcurrencyLimiter`.
 3. VAD-based auto-segmentation: more natural but adds complexity and a VAD dependency.
    Out-of-scope at this phase; the discrete pipeline is the right thing to ship first.
 
-**TTS model:** `aura-asteria-en` (Deepgram Aura) by default. Overridable via
-`DEEPGRAM_TTS_MODEL` env var. Spanish voice (`aura-2-sirio-es` / `aura-2-diana-es`)
-is available when Phase 4 multilingual support lands. ElevenLabs is a one-line swap
-behind `_speak()`.
+**TTS model:** now language-keyed via `i18n.tts_voice(language)` — EN uses
+`aura-asteria-en`, ES uses `aura-2-carina-es` (bilingual EN+ES capable). Overridable
+via `DEEPGRAM_TTS_MODEL` env var. ElevenLabs is a one-line swap behind `_speak()`.
 
 **Graceful degradation:** `VoiceAdapter` degrades to `TextAdapter` if
 `DEEPGRAM_API_KEY` is absent, or if `deepgram` or `sounddevice` failed to import.
 Any per-turn STT or TTS error falls back for that turn only, without crashing.
+
+## 11. Language detection: offline library vs. LLM vs. flag-only
+
+**Decision:** `py3langid` (offline library) for automatic language detection on the
+first candidate turn, with `--lang <code>` as an explicit override.
+
+**Options considered:**
+1. **Flag-only (`--lang en|es`):** zero extra dependency, fully deterministic, but
+   requires the user to know the language in advance. Skips build-plan step 16.
+2. **Piggyback on the extraction LLM call:** zero extra API calls; reuses the
+   structured-output path. Couples detection into the extraction schema; non-deterministic
+   in tests (mock must be language-aware); doesn't run until after the first LLM call.
+3. **Offline library — `py3langid` (chosen):** pure, deterministic, network-free
+   function. Runs synchronously before extraction. Trivially unit-testable without
+   mocking. One small dependency. EN/ES discrimination is reliable even on short text
+   (tested on realistic restaurant candidate turns).
+
+**Why this matters:** language detection is a boundary concern, not an extraction
+concern. Keeping it a pure function preserves the determinism guarantees that make
+the eval harness trustworthy.
+
+**Limitation:** in `auto` mode the greeting is always EN (no candidate text exists
+yet). Documented; use `--lang es` for the ES voice demo.
+
+## 12. Candidate-facing confirmation: deterministic templates vs. LLM-generated readback
+
+**Decision:** per-language, deterministic sentence-frame templates in `agent/i18n.py`.
+
+**Options considered:**
+1. **LLM-generated readback:** zero templates; scales to any language with little code.
+   Non-deterministic, needs mocking in tests, and the TTS-tuned period-separated prose
+   would be unpredictable. Any hallucination in the readback is a false positive
+   presented directly to the candidate.
+2. **Deterministic templates (chosen):** fixed sentence frames per language in a table.
+   Deterministic, fully unit-testable, TTS-tuned (each sentence ends with `.` so TTS
+   pauses naturally), and on-brand with "localized templates, extensible via config."
+   Adding a new language = adding one new `_Strings` table entry.
+   Cost: more code per language (acceptable for EN+ES scope).
+
+**Why this matters:** the confirmation is spoken back to the candidate and forms part
+of the CONFIRMING state. Determinism here means the reviewer-candidate trust loop is
+predictable and auditable.
 
 ## Scope: what was intentionally left out, and why
 - Kubernetes manifests (Dockerfile is proportionate); web UI (CLI demonstrates the
