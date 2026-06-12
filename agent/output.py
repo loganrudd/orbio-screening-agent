@@ -73,9 +73,9 @@ def render_candidate_confirmation(record: ScreeningRecord) -> str:
         label = _FIELD_LABELS.get(fname, fname)
         optional = " (optional)" if fname == "location_preference" else ""
         if ef is None:
-            lines.append(f"  • {label}{optional}: (not provided)")
+            lines.append(f"  {label}{optional}: (not provided)")
         else:
-            lines.append(f"  • {label}: {_format_value(ef.value)}")
+            lines.append(f"  {label}: {_format_value(ef.value)}")
     return "\n".join(lines)
 
 
