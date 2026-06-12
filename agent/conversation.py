@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from . import i18n
 from .extraction import Extractor
 from .llm import LLMClient
-from .observability import trace_turn
+from .observability import trace_root, trace_turn
 from .output import build_summary, render_candidate_confirmation, render_reviewer_table
 from .schemas import ConversationState, ScreeningRecord
 from .storage import ConversationSnapshot, ConversationStore, Turn
@@ -74,54 +74,61 @@ class ConversationEngine:
         if snapshot is None:
             raise ValueError(f"Unknown conversation: {conversation_id!r}")
 
-        # Append candidate turn
-        snapshot.transcript.append(turn)
+        candidate_turns_before = [t for t in snapshot.transcript if t.role == "candidate"]
+        turn_index = len(candidate_turns_before)
 
-        # Initialize record on first real turn
-        if snapshot.record is None:
-            snapshot.record = ScreeningRecord()
+        with trace_root(
+            "handle_turn",
+            conversation_id=conversation_id,
+            turn_index=turn_index,
+            state_before=snapshot.state.value,
+            language=snapshot.language,
+        ):
+            # Append candidate turn
+            snapshot.transcript.append(turn)
 
-        # Transition GREETING → COLLECTING on the first candidate response.
-        # Language detection runs exactly once here (before any extraction).
-        if snapshot.state == ConversationState.GREETING:
-            if snapshot.auto_detect:
-                detected = i18n.detect_language(turn.content)
-                if detected:
-                    snapshot.language = detected
-            snapshot.state = ConversationState.COLLECTING
+            # Initialize record on first real turn
+            if snapshot.record is None:
+                snapshot.record = ScreeningRecord()
 
-        # Run extraction while collecting or confirming (corrections)
-        if snapshot.state in (ConversationState.COLLECTING, ConversationState.CONFIRMING):
-            candidate_turns = [t for t in snapshot.transcript if t.role == "candidate"]
-            turn_index = len(candidate_turns) - 1
+            # Transition GREETING → COLLECTING on the first candidate response.
+            # Language detection runs exactly once here (before any extraction).
+            if snapshot.state == ConversationState.GREETING:
+                if snapshot.auto_detect:
+                    detected = i18n.detect_language(turn.content)
+                    if detected:
+                        snapshot.language = detected
+                snapshot.state = ConversationState.COLLECTING
 
-            with trace_turn("extraction", turn_index=turn_index, conv=conversation_id):
-                snapshot.record = await self._extractor.extract_turn(
-                    record=snapshot.record,
-                    latest_turn=turn,
-                    turn_index=turn_index,
-                    language=snapshot.language,
-                )
+            # Run extraction while collecting or confirming (corrections)
+            if snapshot.state in (ConversationState.COLLECTING, ConversationState.CONFIRMING):
+                with trace_turn("extraction", turn_index=turn_index, conv=conversation_id):
+                    snapshot.record = await self._extractor.extract_turn(
+                        record=snapshot.record,
+                        latest_turn=turn,
+                        turn_index=turn_index,
+                        language=snapshot.language,
+                    )
 
-        outstanding = self._outstanding_fields(snapshot)
+            outstanding = self._outstanding_fields(snapshot)
 
-        # Advance state
-        if snapshot.state == ConversationState.COLLECTING and not outstanding:
-            snapshot.state = ConversationState.CONFIRMING
-        elif snapshot.state == ConversationState.CONFIRMING:
-            snapshot.state = ConversationState.SUMMARY
+            # Advance state
+            if snapshot.state == ConversationState.COLLECTING and not outstanding:
+                snapshot.state = ConversationState.CONFIRMING
+            elif snapshot.state == ConversationState.CONFIRMING:
+                snapshot.state = ConversationState.SUMMARY
 
-        # Generate the reply based on the new state
-        reply_text, done, reviewer_output = await self._generate_reply(snapshot, outstanding)
+            # Generate the reply based on the new state
+            reply_text, done, reviewer_output = await self._generate_reply(snapshot, outstanding)
 
-        # Append agent turn
-        agent_turn = Turn(
-            role="agent",
-            content=reply_text,
-            ts=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        )
-        snapshot.transcript.append(agent_turn)
-        self._store.save(snapshot)
+            # Append agent turn
+            agent_turn = Turn(
+                role="agent",
+                content=reply_text,
+                ts=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            )
+            snapshot.transcript.append(agent_turn)
+            self._store.save(snapshot)
 
         return AgentReply(text=reply_text, done=done, reviewer_output=reviewer_output)
 

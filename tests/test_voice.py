@@ -204,7 +204,9 @@ class TestVoiceAdapterTTS:
     ) -> VoiceAdapter:
         monkeypatch.setenv("DEEPGRAM_API_KEY", "fake-key")
 
-        async def _fake_generate(*args, **kwargs):
+        # generate() returns an async iterator DIRECTLY (not a coroutine), so the
+        # mock is a plain function — matching how `async for` consumes it.
+        def _fake_generate(*args, **kwargs):
             return _async_iter(tts_chunks)
 
         mock_client = MagicMock()
@@ -218,24 +220,21 @@ class TestVoiceAdapterTTS:
         return adapter
 
     async def test_tts_plays_audio(self, monkeypatch, capsys):
-        """emit_agent: prints text AND calls sounddevice.play with audio bytes."""
+        """emit_agent: prints text, synthesizes audio, AND plays it via sounddevice."""
         import numpy as np
 
         chunk = (np.zeros(1000, dtype=np.int16)).tobytes()
         adapter = self._adapter_with_mocks(monkeypatch, [chunk])
 
-        played_audio = []
-
-        async def _fake_speak(text: str) -> None:
-            played_audio.append(text)
-
-        adapter._speak = _fake_speak
-
-        await adapter.emit_agent("Hello candidate!")
+        # Patch sounddevice for the duration of playback (the construction-time
+        # patch in _adapter_with_mocks has already exited).
+        with patch("agent.voice.sounddevice") as mock_sd:
+            await adapter.emit_agent("Hello candidate!")
 
         captured = capsys.readouterr()
         assert "Hello candidate!" in captured.out
-        assert "Hello candidate!" in played_audio
+        # Synthesis ran for real (mocked generate) and playback was invoked.
+        mock_sd.play.assert_called_once()
 
     async def test_tts_prints_text_even_on_exception(self, monkeypatch, capsys):
         """TTS failure must not suppress the printed text."""
@@ -245,8 +244,8 @@ class TestVoiceAdapterTTS:
              patch("agent.voice.sounddevice"):
             adapter = VoiceAdapter()
 
-        # Make _speak raise
-        adapter._speak = AsyncMock(side_effect=RuntimeError("TTS down"))
+        # Make synthesis raise — emit_agent must swallow it after printing.
+        adapter._synthesize = AsyncMock(side_effect=RuntimeError("TTS down"))
 
         await adapter.emit_agent("This text should appear")
 
@@ -324,6 +323,47 @@ class TestVoiceAdapterRetry:
             await adapter._with_retry(_factory, label="stt")
         assert calls["n"] == 1  # no retry
         sleep_mock.assert_not_called()
+
+    async def test_empty_message_timeout_is_retried_by_type(self, monkeypatch):
+        """Regression: timeout/transport errors have an EMPTY str() and must be
+        classified transient by TYPE, not message. Previously these failed on the
+        first attempt with a blank error log."""
+        monkeypatch.setattr("agent.voice.asyncio.sleep", AsyncMock())
+        adapter = self._adapter(monkeypatch)
+
+        calls = {"n": 0}
+
+        async def _factory():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TimeoutError()  # str() == "" — would never match a marker
+            return "ok"
+
+        result = await adapter._with_retry(_factory, label="tts")
+        assert result == "ok"
+        assert calls["n"] == 2  # retried despite the empty message
+
+    async def test_per_call_timeout_trips_and_retries(self, monkeypatch):
+        """A call that hangs past _CALL_TIMEOUT_S is cancelled via wait_for, raising
+        TimeoutError, which is transient → retried rather than blocking the turn."""
+        # NOTE: do not mock asyncio.sleep here — the factory's hang IS an
+        # asyncio.sleep, and the backoff between attempts is small/real.
+        monkeypatch.setattr("agent.voice._CALL_TIMEOUT_S", 0.05)
+        monkeypatch.setattr("agent.voice._RETRY_BASE_DELAY_S", 0.0)
+        monkeypatch.setattr("agent.voice._RETRY_MAX_DELAY_S", 0.0)
+        adapter = self._adapter(monkeypatch)
+
+        calls = {"n": 0}
+
+        async def _factory():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                await asyncio.sleep(10)  # hangs — wait_for cancels it
+            return "ok"
+
+        result = await adapter._with_retry(_factory, label="tts")
+        assert result == "ok"
+        assert calls["n"] == 2
 
 
 # ──────────────────────────────── CandidateInput ──────────────────────────────

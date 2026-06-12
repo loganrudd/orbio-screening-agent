@@ -21,12 +21,14 @@ import sys
 from agent.conversation import ConversationEngine
 from agent.extraction import Extractor
 from agent.llm import ClaudeClient
+from agent.observability import init_tracing
 from agent.output import build_summary, render_reviewer_table
 from agent.storage import JsonFileStore, Turn
 from agent.voice import TextAdapter, VoiceAdapter
 
 
 async def run(voice: bool, language: str) -> None:
+    init_tracing()
     store = JsonFileStore()
     llm = ClaudeClient()
     extractor = Extractor(llm)
@@ -93,6 +95,11 @@ def main() -> None:
         asyncio.run(run(voice=args.voice, language=args.lang))
     except KeyboardInterrupt:
         print("\n[Screening interrupted]", file=sys.stderr)
+        # Conversation JSON is saved incrementally on every turn — no data loss.
+        # os._exit bypasses atexit handlers (including MLflow's async trace flush)
+        # so Ctrl+C exits immediately rather than waiting up to 30 seconds.
+        import os
+        os._exit(0)
 
 
 if __name__ == "__main__":

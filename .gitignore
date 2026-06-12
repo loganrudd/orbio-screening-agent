@@ -32,6 +32,8 @@ data/conversations/*
 # MLflow
 mlruns/
 mlartifacts/
+mlflow.db
+*.mlflow.db
 
 # OS / editor
 .DS_Store

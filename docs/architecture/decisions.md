@@ -226,6 +226,54 @@ yet). Documented; use `--lang es` for the ES voice demo.
 of the CONFIRMING state. Determinism here means the reviewer-candidate trust loop is
 predictable and auditable.
 
+## 13. MLflow tracing: hybrid autolog + manual spans, one trace per turn, env-var gate
+
+**Decision:** hybrid instrumentation — `mlflow.anthropic.autolog()` captures token usage
+and latency on every Anthropic SDK call automatically; `trace_root()` / `trace_turn()`
+create the structural turn/decision-path spans that those auto-spans nest under.
+One MLflow trace per `handle_turn()` call. Tracing is a no-op unless `MLFLOW_TRACING=1`
+or `MLFLOW_TRACKING_URI` is set.
+
+**Options considered:**
+
+1. **Manual-only spans:** full control — `response.usage` can be read explicitly and set
+   as span attributes. But this requires changing `LLMClient`'s return types (currently
+   discards `usage`) and adds the most code for no real gain — autolog already captures
+   usage/latency without touching `llm.py`.
+
+2. **Autolog-only:** simplest. But autolog records raw LLM calls with no structural
+   context — the turn index, conversation state, outstanding fields, and language are
+   absent. Reviewing traces shows "an Anthropic call happened" but not "this call was
+   extraction turn 3 in Spanish while 4 fields were outstanding."
+
+3. **Hybrid (chosen):** `init_tracing()` calls `mlflow.anthropic.autolog(log_traces=True)`
+   once at process start; `trace_root("handle_turn", ...)` and `trace_turn("extraction"/
+   "respond", ...)` build the structural hierarchy those LLM auto-spans nest under. `llm.py`
+   is untouched. The trace for each turn carries both decision-path attributes (state,
+   language, outstanding fields) and LLM metrics (token usage, latency) in one view.
+
+**One trace per turn:** matches the stateless "each `handle_turn()` = one request" design.
+Per-conversation threading would require cross-turn span context that fights the
+deliberate statelessness enforced by `ConversationStore`.
+
+**Env-var gate (not import-presence gate):** `mlflow>=3.0` is always importable in this
+repo. Gating on import alone would emit traces (and create `mlruns/`) during every CI run.
+`MLFLOW_TRACING=1` (or a set `MLFLOW_TRACKING_URI`) makes tracing a genuine opt-in; the
+default CI/test run is a pure no-op with no filesystem side effects.
+
+**Observational-only invariant:** all span creation is wrapped in try/except; a tracing
+failure can never break a turn. The `_yielded` sentinel in `trace_root()` / `trace_turn()`
+distinguishes "span setup failed → degrade to no-op" from "body raised → propagate."
+
+**Token cost:** autolog captures `input_tokens` / `output_tokens` automatically. The known
+Opus pricing ($5/$25 per MTok) could be surfaced as a derived USD attribute on the root
+span — documented as a future nicety, not implemented (no hardcoded pricing in production code).
+
+**Production evolution:** the discrete STT→LLM→TTS pipeline would migrate to a real-time
+native-audio model (e.g. Gemini Live) for low-latency interviews; richer per-route model
+cost tracking (cheap extraction model vs. expensive conversational model) is a natural
+extension once multi-model routing is added.
+
 ## Scope: what was intentionally left out, and why
 - Kubernetes manifests (Dockerfile is proportionate); web UI (CLI demonstrates the
   contract); multi-agent framework (state machine is clearer); database (JSON via the
